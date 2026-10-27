@@ -97,12 +97,67 @@ func (e *OpenAICompatExecutor) HttpRequest(ctx context.Context, auth *cliproxyau
 
 func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
 	ctx = helps.EnsureSessionContext(ctx, opts, req.Payload)
+	if route := openAICompatNativeRoute(opts); route != "" {
+		return e.executeNative(ctx, auth, req, opts, route)
+	}
 	if endpointPath := openAICompatImageEndpointPath(opts); endpointPath != "" {
 		return e.executeImages(ctx, auth, req, opts, endpointPath)
 	}
 	baseURL, apiKey := e.resolveCredentials(auth)
 	compat := e.resolveCompatConfig(auth, req)
 	return e.executeWithCredentials(ctx, auth, req, opts, baseURL, apiKey, compat)
+}
+
+func openAICompatNativeRoute(opts cliproxyexecutor.Options) string {
+	if opts.Metadata == nil {
+		return ""
+	}
+	v, _ := opts.Metadata["openai_compat_native_route"].(string)
+	return strings.TrimSpace(v)
+}
+
+func (e *OpenAICompatExecutor) executeNative(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, route string) (resp cliproxyexecutor.Response, err error) {
+	baseURL, apiKey := e.resolveCredentials(auth)
+	if baseURL == "" {
+		return resp, statusErr{code: http.StatusUnauthorized, msg: "missing provider baseURL"}
+	}
+	url := strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(route, "/")
+	contentType := opts.Headers.Get("Content-Type")
+	if v, ok := opts.Metadata["openai_compat_native_content_type"].(string); ok && v != "" {
+		contentType = v
+	}
+	httpReq, errNew := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(req.Payload))
+	if errNew != nil {
+		return resp, errNew
+	}
+	if contentType != "" {
+		httpReq.Header.Set("Content-Type", contentType)
+	}
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	ensureOpenAICompatUserAgent(httpReq, opts.Headers)
+	if auth != nil {
+		util.ApplyCustomHeadersFromAttrs(httpReq, auth.Attributes, opts.Headers)
+	}
+	helps.RecordAPIRequest(ctx, e.cfg, helps.UpstreamRequestLog{URL: url, Method: http.MethodPost, Headers: httpReq.Header.Clone(), Body: req.Payload, Provider: e.Identifier()})
+	client := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
+	upstream, errDo := client.Do(httpReq)
+	if errDo != nil {
+		helps.RecordAPIResponseError(ctx, e.cfg, errDo)
+		return resp, errDo
+	}
+	defer upstream.Body.Close()
+	helps.RecordAPIResponseMetadata(ctx, e.cfg, upstream.StatusCode, upstream.Header.Clone())
+	body, errRead := io.ReadAll(io.LimitReader(upstream.Body, 64<<20))
+	if errRead != nil {
+		return resp, errRead
+	}
+	helps.AppendAPIResponseChunk(ctx, e.cfg, body)
+	if upstream.StatusCode < 200 || upstream.StatusCode >= 300 {
+		return resp, statusErr{code: upstream.StatusCode, msg: string(body), headers: upstream.Header.Clone(), body: body}
+	}
+	return cliproxyexecutor.Response{Payload: body, Headers: upstream.Header.Clone()}, nil
 }
 
 func (e *OpenAICompatExecutor) executeWithCredentials(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, baseURL, apiKey string, compat *config.OpenAICompatibility) (resp cliproxyexecutor.Response, err error) {
@@ -1156,6 +1211,8 @@ type statusErr struct {
 	retryAfter       *time.Duration
 	credentialScoped bool
 	streamTruncated  bool
+	headers          http.Header
+	body             []byte
 }
 
 func (e statusErr) Error() string {
@@ -1164,9 +1221,11 @@ func (e statusErr) Error() string {
 	}
 	return fmt.Sprintf("status %d", e.code)
 }
-func (e statusErr) StatusCode() int            { return e.code }
-func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
-func (e statusErr) IsCredentialScoped() bool   { return e.credentialScoped }
+func (e statusErr) StatusCode() int              { return e.code }
+func (e statusErr) RetryAfter() *time.Duration   { return e.retryAfter }
+func (e statusErr) IsCredentialScoped() bool     { return e.credentialScoped }
+func (e statusErr) ResponseHeaders() http.Header { return e.headers.Clone() }
+func (e statusErr) ResponseBody() []byte         { return append([]byte(nil), e.body...) }
 
 // IsStreamTruncated marks a locally synthesized failure for an accepted
 // upstream stream that ended without its terminal frame.

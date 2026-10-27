@@ -437,6 +437,8 @@ type BaseAPIHandler struct {
 
 	// Cfg holds the current application configuration.
 	Cfg *config.SDKConfig
+	// FullConfig holds provider definitions for native compatibility routes.
+	FullConfig *config.Config
 
 	// PluginHost optionally applies plugin interceptors around upstream execution.
 	PluginHost PluginInterceptorHost
@@ -459,6 +461,12 @@ func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager) *B
 	return &BaseAPIHandler{
 		Cfg:         cfg,
 		AuthManager: authManager,
+	}
+}
+
+func (h *BaseAPIHandler) SetFullConfig(cfg *config.Config) {
+	if h != nil {
+		h.FullConfig = cfg
 	}
 }
 

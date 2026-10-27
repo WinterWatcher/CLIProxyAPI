@@ -986,6 +986,9 @@ type OpenAICompatibility struct {
 	// Headers optionally adds extra HTTP headers for requests sent to this provider.
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 
+	// Routes optionally overrides native non-chat OpenAI-compatible endpoint paths.
+	Routes map[string]string `yaml:"routes,omitempty" json:"routes,omitempty"`
+
 	// SupportPromptCacheKey enables derived prompt_cache_key injection for supported requests.
 	SupportPromptCacheKey bool `yaml:"support-prompt-cache-key,omitempty" json:"support-prompt-cache-key,omitempty"`
 
@@ -1022,6 +1025,10 @@ type OpenAICompatibilityModel struct {
 
 	// Alias is the model name alias that clients will use to reference this model.
 	Alias string `yaml:"alias" json:"alias"`
+
+	// Capability and Type identify native non-chat capabilities: embedding, rerank, or asr.
+	Capability string `yaml:"capability,omitempty" json:"capability,omitempty"`
+	Type       string `yaml:"type,omitempty" json:"type,omitempty"`
 
 	// DisplayName is the optional human-readable name shown in model catalogs.
 	DisplayName string `yaml:"display-name,omitempty" json:"display-name,omitempty"`
