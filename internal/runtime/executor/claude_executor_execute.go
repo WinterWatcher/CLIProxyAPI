@@ -256,6 +256,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	}
 	extraBetas, bodyForUpstream = extractAndRemoveBetas(bodyForUpstream)
 	bodyForUpstream = stripPromptCacheOptions(bodyForUpstream)
+	bodyForUpstream = normalizeFinalClaudeMessagesPayload(bodyForUpstream)
 	if cchSigning {
 		bodyForUpstream, err = signAnthropicMessagesBody(bodyForUpstream)
 		if err != nil {

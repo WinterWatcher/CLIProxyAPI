@@ -2907,3 +2907,50 @@ func stripClaudeToolPrefixFromStreamLine(line []byte, prefix string) []byte {
 	}
 	return updated
 }
+
+func normalizeFinalClaudeMessagesPayload(body []byte) []byte {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return body
+	}
+
+	if maxTokens := gjson.GetBytes(body, "max_tokens"); maxTokens.Exists() && maxTokens.Int() > 8192 {
+		body, _ = sjson.SetBytes(body, "max_tokens", 8192)
+	}
+
+	messages := gjson.GetBytes(body, "messages")
+	if messages.IsArray() {
+		msgs := messages.Array()
+		hasTrailingAssistant := len(msgs) > 0 && strings.EqualFold(strings.TrimSpace(msgs[len(msgs)-1].Get("role").String()), "assistant")
+
+		end := len(msgs)
+		if hasTrailingAssistant {
+			end--
+		}
+
+		keptMessages := make([]string, 0, end+1)
+		hasUser := false
+		for i := 0; i < end; i++ {
+			msg := msgs[i]
+			if strings.EqualFold(strings.TrimSpace(msg.Get("role").String()), "user") {
+				hasUser = true
+			}
+			keptMessages = append(keptMessages, msg.Raw)
+		}
+
+		if !hasUser {
+			keptMessages = append(keptMessages, `{"role":"user","content":"continue"}`)
+		}
+
+		if hasTrailingAssistant || !hasUser {
+			if updated, err := sjson.SetRawBytes(body, "messages", rawJSONArray(keptMessages)); err == nil {
+				body = updated
+			}
+		}
+	} else if !messages.Exists() {
+		if updated, err := sjson.SetRawBytes(body, "messages", []byte(`[{"role":"user","content":"continue"}]`)); err == nil {
+			body = updated
+		}
+	}
+
+	return body
+}
