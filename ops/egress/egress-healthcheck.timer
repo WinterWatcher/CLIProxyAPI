@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Egress Proxy Healthcheck Timer
+After=network.target
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Egress Proxy Dynamic Node Selection Timer
+After=network.target
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=Egress Proxy Dynamic Node Selection Service
+After=network.target egress-healthcheck.service
+
+[Service]
+Type=oneshot
+User=nobody
+Group=nogroup
+WorkingDirectory=/opt/cliproxy/ops/egress
+EnvironmentFile=-/etc/default/egress-proxy.env
+ExecStart=/usr/bin/python3 /opt/cliproxy/ops/egress/select_node.py --json
+StandardOutput=journal
+StandardError=journal
+TimeoutSec=60
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
