@@ -59,6 +59,7 @@ class NodeSelectionConfig:
         post_select_health_rounds: int = 2,
         post_select_health_interval: float = 0.5,
         health_config: Optional[HealthCheckConfig] = None,
+        dry_run: bool = False,
     ):
         self.node_api_base_url = node_api_base_url.rstrip("/")
         self.node_api_token = node_api_token.strip() if node_api_token and node_api_token.strip() else None
@@ -75,6 +76,7 @@ class NodeSelectionConfig:
         self.post_select_health_rounds = max(1, int(post_select_health_rounds))
         self.post_select_health_interval = max(0.0, float(post_select_health_interval))
         self.health_config = health_config or HealthCheckConfig.from_env()
+        self.dry_run = bool(dry_run)
 
     @classmethod
     def from_env(cls) -> "NodeSelectionConfig":
@@ -90,6 +92,7 @@ class NodeSelectionConfig:
             post_select_health_rounds=int(os.environ.get("POST_SELECT_HEALTH_ROUNDS", 2)),
             post_select_health_interval=float(os.environ.get("POST_SELECT_HEALTH_INTERVAL", 0.5)),
             health_config=HealthCheckConfig.from_env(),
+            dry_run=os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes"),
         )
 
 
@@ -325,6 +328,19 @@ def select_best_node(config: Optional[NodeSelectionConfig] = None) -> Dict[str, 
         ),
     )
 
+    if config.dry_run:
+        chosen_node = ranked_candidates[0]
+        return {
+            "success": True,
+            "dry_run": True,
+            "reason_code": CODE_SELECT_OK,
+            "message": f"[DRY-RUN] Selected best candidate node: {chosen_node}",
+            "current_node": original_node,
+            "selected_node": chosen_node,
+            "delay_ms": alive_delays[chosen_node],
+            "tested_candidates": len(alive_delays),
+        }
+
     # 5. Selection and multi-round post-selection verification
     selection_succeeded = False
     chosen_node: Optional[str] = None
@@ -397,6 +413,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concurrency", type=int, default=None, help="Probe concurrency")
     parser.add_argument("--timeout-ms", type=int, default=None, help="Probe timeout ms")
     parser.add_argument("--health-rounds", type=int, default=None, help="Post-selection health check rounds")
+    parser.add_argument("--dry-run", action="store_true", help="Probe candidates and report best node without switching")
     parser.add_argument("--json", action="store_true", help="Output JSON result")
     return parser.parse_args()
 
@@ -415,6 +432,7 @@ def main() -> int:
         probe_timeout_ms=args.timeout_ms if args.timeout_ms is not None else env_cfg.probe_timeout_ms,
         post_select_health_rounds=args.health_rounds if args.health_rounds is not None else env_cfg.post_select_health_rounds,
         health_config=HealthCheckConfig.from_env(),
+        dry_run=args.dry_run or env_cfg.dry_run,
     )
 
     result = select_best_node(config)

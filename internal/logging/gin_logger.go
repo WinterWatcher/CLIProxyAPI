@@ -107,12 +107,22 @@ func GinLogrusLogger() gin.HandlerFunc {
 		switch {
 		case statusCode >= http.StatusInternalServerError:
 			entry.Error(logLine)
+		case statusCode == http.StatusNotFound && isClientProbe(method, path):
+			entry.Debug(logLine)
 		case statusCode >= http.StatusBadRequest:
 			entry.Warn(logLine)
 		default:
 			entry.Info(logLine)
 		}
 	}
+}
+
+func isClientProbe(method, path string) bool {
+	if method == http.MethodHead || method == http.MethodOptions {
+		return true
+	}
+	p := strings.ToLower(strings.TrimSpace(path))
+	return p == "/favicon.ico" || p == "/robots.txt" || p == "/" || p == "/health" || p == "/healthz"
 }
 
 // isAIAPIPath checks if the given path is an AI API endpoint that should have request ID tracking.

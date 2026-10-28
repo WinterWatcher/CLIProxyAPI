@@ -13,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 const (
@@ -42,6 +43,39 @@ var openAISpeechVoices = map[string]string{
 }
 
 func (h *OpenAIAPIHandler) AudioSpeech(c *gin.Context) {
+	if h != nil && h.BaseAPIHandler != nil && h.FullConfig != nil {
+		cfg := h.FullConfig
+		raw, err := handlers.ReadRequestBody(c)
+		if err != nil {
+			writeSpeechError(c, clienterror.HTTPStatusFromErrorOr(err, http.StatusBadRequest), fmt.Sprintf("Invalid request: %v", err))
+			return
+		}
+		requested := strings.TrimSpace(gjson.GetBytes(raw, "model").String())
+		if provider, upstream, ok := nativeProviderModel(cfg, requested, "tts"); ok {
+			payload := raw
+			if upstream != requested {
+				payload, _ = sjson.SetBytes(payload, "model", upstream)
+			}
+			h.executeNative(c, cfg, provider, requested, upstream, "tts", payload, "application/json")
+			return
+		}
+		if provider, upstream, ok := nativeProviderModel(cfg, requested, "speech"); ok {
+			payload := raw
+			if upstream != requested {
+				payload, _ = sjson.SetBytes(payload, "model", upstream)
+			}
+			h.executeNative(c, cfg, provider, requested, upstream, "tts", payload, "application/json")
+			return
+		}
+		if found, actualCap := nativeModelCapability(cfg, requested); found && actualCap != "tts" && actualCap != "speech" {
+			writeSpeechError(c, http.StatusBadRequest, fmt.Sprintf("model %q does not support capability tts (has %q)", requested, actualCap))
+			return
+		}
+		if _, isXAI := speechRoutingModel(requested); !isXAI {
+			writeSpeechError(c, http.StatusNotFound, fmt.Sprintf("model %q not found", requested))
+			return
+		}
+	}
 	h.handleXAISpeech(c)
 }
 

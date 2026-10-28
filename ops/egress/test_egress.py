@@ -336,6 +336,42 @@ class TestEgressHealthAndSelection(unittest.TestCase):
         # Ensure the final active node in controller API is Old-Node (restored)
         self.assertEqual(MockNodeApiHandler.current_node, "Old-Node")
 
+    def test_node_selection_dry_run(self):
+        """Verify dry-run mode probes candidates without executing node switches."""
+        MockNodeApiHandler.recorded_switches.clear()
+        MockNodeApiHandler.current_node = "Old-Node"
+
+        health_cfg = HealthCheckConfig(
+            ip_check_url=f"http://127.0.0.1:{self.health_port}/ip",
+            google_check_url=f"http://127.0.0.1:{self.health_port}/google",
+            oauth_check_url=f"http://127.0.0.1:{self.health_port}/oauth",
+            cloud_code_check_url=f"http://127.0.0.1:{self.health_port}/cloudcode",
+            timeout_seconds=1.0,
+            repeat_checks=1,
+            failure_threshold=1,
+        )
+
+        node_cfg = NodeSelectionConfig(
+            node_api_base_url=f"http://127.0.0.1:{self.node_port}",
+            node_api_token="test_secret_token",
+            selector_name="GLOBAL",
+            allowed_country_prefix="US",
+            probe_concurrency=2,
+            probe_timeout_ms=1000,
+            delay_test_url=f"http://127.0.0.1:{self.health_port}/google",
+            dry_run=True,
+            health_config=health_cfg,
+        )
+
+        result = select_best_node(node_cfg)
+        self.assertTrue(result["success"])
+        self.assertTrue(result.get("dry_run"))
+        self.assertEqual(result["selected_node"], "US-Node-1")
+        self.assertEqual(result["current_node"], "Old-Node")
+        # Ensure no PUT requests were made in dry-run mode
+        self.assertEqual(len(MockNodeApiHandler.recorded_switches), 0)
+        self.assertEqual(MockNodeApiHandler.current_node, "Old-Node")
+
     def test_redact_secrets(self):
         """Verify tokens, passwords, and secrets are sanitized."""
         raw_url = "http://admin:my_secret_pass@127.0.0.1:9090/check?token=SUPER_SECRET_123"

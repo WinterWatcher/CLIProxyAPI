@@ -162,7 +162,7 @@ func emitNativeUsageRecord(c *gin.Context, provider, requestedModel, model, capa
 			quantity = duration
 			inQty = duration
 		}
-	case "tts":
+	case "tts", "speech":
 		billingUnit = "characters"
 		chars := float64(len(gjson.GetBytes(reqBody, "input").String()))
 		if chars > 0 {
@@ -184,6 +184,10 @@ func emitNativeUsageRecord(c *gin.Context, provider, requestedModel, model, capa
 		billingUnit = "video_tasks"
 		quantity = 1
 		outQty = 1
+	case "video_status":
+		billingUnit = "video_status"
+		quantity = 0
+		outQty = 0
 	}
 
 	record := coreusage.Record{
@@ -417,7 +421,9 @@ func (h *OpenAIAPIHandler) VideoStatus(c *gin.Context) {
 			nativeContentTypeMetadataKey: "application/json",
 		},
 	}
+	start := time.Now()
 	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, "video"), []string{providerKey}, coreexecutor.Request{Model: task.Model, Payload: body, Format: "openai"}, opts)
+	emitNativeUsageRecord(c, task.Provider, reqID, task.Model, "video_status", body, resp.Payload, start, err)
 	if err != nil {
 		if re, ok := err.(nativeRouteError); ok {
 			cleanBody := sanitizeNativeErrorBody(re.ResponseBody(), compat, re.StatusCode())
@@ -529,6 +535,9 @@ func nativeProviderModel(cfg *config.Config, requested, capability string) (stri
 			if cap == "" && m.Image && capability == "image" {
 				cap = "image"
 			}
+			if (capability == "tts" || capability == "speech") && (cap == "tts" || cap == "speech") {
+				cap = capability
+			}
 			if cap != capability || (requested != m.Alias && requested != m.Name) {
 				continue
 			}
@@ -543,6 +552,8 @@ func nativeRoute(p *config.OpenAICompatibility, capability string) string {
 		"embedding":    "/embeddings",
 		"rerank":       "/rerank",
 		"asr":          "/audio/transcriptions",
+		"tts":          "/audio/speech",
+		"speech":       "/audio/speech",
 		"image":        "/images/generations",
 		"video_submit": "/video/submit",
 		"video_status": "/video/status",
@@ -558,6 +569,19 @@ func nativeRoute(p *config.OpenAICompatibility, capability string) string {
 			}
 		case "embedding":
 			if v := strings.TrimSpace(p.Routes["embeddings"]); v != "" {
+				return v
+			}
+		case "tts", "speech":
+			if v := strings.TrimSpace(p.Routes["audio/speech"]); v != "" {
+				return v
+			}
+			if v := strings.TrimSpace(p.Routes["audio_speech"]); v != "" {
+				return v
+			}
+			if v := strings.TrimSpace(p.Routes["speech"]); v != "" {
+				return v
+			}
+			if v := strings.TrimSpace(p.Routes["tts"]); v != "" {
 				return v
 			}
 		case "image":

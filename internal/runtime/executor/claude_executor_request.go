@@ -2908,22 +2908,64 @@ func stripClaudeToolPrefixFromStreamLine(line []byte, prefix string) []byte {
 	return updated
 }
 
-func normalizeFinalClaudeMessagesPayload(body []byte) []byte {
+func isAssistantPrefill(msg gjson.Result) bool {
+	if !strings.EqualFold(strings.TrimSpace(msg.Get("role").String()), "assistant") {
+		return false
+	}
+	content := msg.Get("content")
+	if content.Type == gjson.String {
+		return strings.TrimSpace(content.String()) != ""
+	}
+	if content.IsArray() {
+		hasText := false
+		for _, block := range content.Array() {
+			if block.Get("cache_control").Exists() {
+				return false
+			}
+			blockType := block.Get("type").String()
+			if blockType == "tool_use" || blockType == "server_tool_use" || blockType == "web_search_call" || blockType == "tool_result" {
+				return false
+			}
+			if blockType == "text" {
+				hasText = true
+			}
+		}
+		return hasText
+	}
+	return false
+}
+
+func normalizeFinalClaudeMessagesPayload(body []byte, preserveMaxTokens ...bool) []byte {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return body
 	}
 
-	if maxTokens := gjson.GetBytes(body, "max_tokens"); maxTokens.Exists() && maxTokens.Int() > 8192 {
-		body, _ = sjson.SetBytes(body, "max_tokens", 8192)
+	shouldPreserveMaxTokens := len(preserveMaxTokens) > 0 && preserveMaxTokens[0]
+	if !shouldPreserveMaxTokens {
+		thinkingActive := false
+		switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String())) {
+		case "enabled", "adaptive", "auto":
+			thinkingActive = true
+		}
+		if gjson.GetBytes(body, "thinking.budget_tokens").Int() > 0 ||
+			gjson.GetBytes(body, "reasoning_effort").Exists() ||
+			gjson.GetBytes(body, "output_config.effort").Exists() {
+			thinkingActive = true
+		}
+		if !thinkingActive {
+			if maxTokens := gjson.GetBytes(body, "max_tokens"); maxTokens.Exists() && maxTokens.Int() > 8192 {
+				body, _ = sjson.SetBytes(body, "max_tokens", 8192)
+			}
+		}
 	}
 
 	messages := gjson.GetBytes(body, "messages")
 	if messages.IsArray() {
 		msgs := messages.Array()
-		hasTrailingAssistant := len(msgs) > 0 && strings.EqualFold(strings.TrimSpace(msgs[len(msgs)-1].Get("role").String()), "assistant")
+		hasTrailingPrefill := len(msgs) > 0 && isAssistantPrefill(msgs[len(msgs)-1])
 
 		end := len(msgs)
-		if hasTrailingAssistant {
+		if hasTrailingPrefill {
 			end--
 		}
 
@@ -2941,7 +2983,7 @@ func normalizeFinalClaudeMessagesPayload(body []byte) []byte {
 			keptMessages = append(keptMessages, `{"role":"user","content":"continue"}`)
 		}
 
-		if hasTrailingAssistant || !hasUser {
+		if hasTrailingPrefill || !hasUser {
 			if updated, err := sjson.SetRawBytes(body, "messages", rawJSONArray(keptMessages)); err == nil {
 				body = updated
 			}
