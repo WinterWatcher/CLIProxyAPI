@@ -225,11 +225,12 @@ func (h *OpenAIAPIHandler) Rerank(c *gin.Context)              { h.NativeOpenAIC
 func (h *OpenAIAPIHandler) AudioTranscriptions(c *gin.Context) { h.NativeOpenAICompat(c, "asr") }
 
 type nativeVideoTask struct {
-	Provider  string
-	Model     string
-	AuthID    string
-	CreatedAt time.Time
-	ExpiresAt time.Time
+	Provider      string
+	PublicModel   string
+	UpstreamModel string
+	AuthID        string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
 }
 
 type nativeVideoTaskStore struct {
@@ -241,7 +242,7 @@ var globalNativeVideoTasks = &nativeVideoTaskStore{
 	tasks: make(map[string]nativeVideoTask),
 }
 
-func (s *nativeVideoTaskStore) Set(requestID, provider, model, authID string) {
+func (s *nativeVideoTaskStore) Set(requestID, provider, publicModel, upstreamModel, authID string) {
 	if s == nil || strings.TrimSpace(requestID) == "" {
 		return
 	}
@@ -249,11 +250,12 @@ func (s *nativeVideoTaskStore) Set(requestID, provider, model, authID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tasks[strings.TrimSpace(requestID)] = nativeVideoTask{
-		Provider:  provider,
-		Model:     model,
-		AuthID:    authID,
-		CreatedAt: now,
-		ExpiresAt: now.Add(24 * time.Hour),
+		Provider:      provider,
+		PublicModel:   publicModel,
+		UpstreamModel: upstreamModel,
+		AuthID:        authID,
+		CreatedAt:     now,
+		ExpiresAt:     now.Add(24 * time.Hour),
 	}
 }
 
@@ -353,7 +355,7 @@ func (h *OpenAIAPIHandler) VideoSubmit(c *gin.Context) {
 		if resp.Metadata != nil {
 			authID, _ = resp.Metadata[coreexecutor.SelectedAuthMetadataKey].(string)
 		}
-		globalNativeVideoTasks.Set(reqID, provider, upstream, authID)
+		globalNativeVideoTasks.Set(reqID, provider, model, upstream, authID)
 	}
 	writeNativeResponse(c, http.StatusOK, resp.Headers, outPayload)
 }
@@ -392,8 +394,12 @@ func (h *OpenAIAPIHandler) VideoStatus(c *gin.Context) {
 	}
 	task, found := globalNativeVideoTasks.Get(reqID)
 	if !found {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("video task %q not found", reqID)})
-		return
+		var ok bool
+		task, ok = nativeVideoTaskFromStatusRequest(cfg, body)
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("video task %q not found; include model when multiple video providers are configured", reqID)})
+			return
+		}
 	}
 	compat := nativeCompat(cfg, task.Provider)
 	if compat == nil {
@@ -424,8 +430,8 @@ func (h *OpenAIAPIHandler) VideoStatus(c *gin.Context) {
 		},
 	}
 	start := time.Now()
-	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, "video"), []string{providerKey}, coreexecutor.Request{Model: task.Model, Payload: body, Format: "openai"}, opts)
-	emitNativeUsageRecord(c, task.Provider, reqID, task.Model, "video_status", body, resp.Payload, start, err)
+	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, "video"), []string{providerKey}, coreexecutor.Request{Model: task.PublicModel, Payload: body, Format: "openai"}, opts)
+	emitNativeUsageRecord(c, task.Provider, task.PublicModel, task.UpstreamModel, "video_status", body, resp.Payload, start, err)
 	if err != nil {
 		if re, ok := err.(nativeRouteError); ok {
 			cleanBody := sanitizeNativeErrorBody(re.ResponseBody(), compat, re.StatusCode())
@@ -437,6 +443,18 @@ func (h *OpenAIAPIHandler) VideoStatus(c *gin.Context) {
 	}
 	cleanPayload := sanitizeNativeErrorBody(resp.Payload, compat, http.StatusOK)
 	writeNativeResponse(c, http.StatusOK, resp.Headers, cleanPayload)
+}
+
+func nativeVideoTaskFromStatusRequest(cfg *config.Config, body []byte) (nativeVideoTask, bool) {
+	requested := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	if requested == "" {
+		return nativeVideoTask{}, false
+	}
+	provider, upstream, ok := nativeProviderModel(cfg, requested, "video")
+	if !ok {
+		return nativeVideoTask{}, false
+	}
+	return nativeVideoTask{Provider: provider, PublicModel: requested, UpstreamModel: upstream}, true
 }
 
 func sanitizeNativeErrorBody(body []byte, compat *config.OpenAICompatibility, status int) []byte {
