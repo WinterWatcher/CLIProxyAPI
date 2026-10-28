@@ -73,6 +73,7 @@ func setImagesSSEHeaders(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("X-Accel-Buffering", "no")
 }
 
 func (h *OpenAIAPIHandler) newImagesStreamKeepAliveTicker() (func(), <-chan time.Time) {
@@ -714,6 +715,47 @@ func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
 	if imageModel == "" {
 		imageModel = defaultImagesToolModel
 	}
+
+	if h != nil && h.BaseAPIHandler != nil && h.FullConfig != nil {
+		cfg := h.FullConfig
+		if provider, upstream, ok := nativeProviderModel(cfg, imageModel, "image"); ok {
+			prompt := strings.TrimSpace(gjson.GetBytes(rawJSON, "prompt").String())
+			if prompt == "" {
+				c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+					Error: handlers.ErrorDetail{
+						Message: "Invalid request: prompt is required",
+						Type:    "invalid_request_error",
+					},
+				})
+				return
+			}
+			payload := rawJSON
+			if upstream != imageModel {
+				payload, _ = sjson.SetBytes(payload, "model", upstream)
+			}
+			h.executeNative(c, cfg, provider, imageModel, upstream, "image", payload, "application/json")
+			return
+		}
+		if found, actualCap := nativeModelCapability(cfg, imageModel); found && actualCap != "image" {
+			c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+				Error: handlers.ErrorDetail{
+					Message: fmt.Sprintf("model %q does not support capability image (has %q)", imageModel, actualCap),
+					Type:    "invalid_request_error",
+				},
+			})
+			return
+		}
+		if !isCodexImagesToolModel(imageModel) && !isXAIImagesModel(imageModel) && !isOpenAICompatImagesModel(imageModel) {
+			c.JSON(http.StatusNotFound, handlers.ErrorResponse{
+				Error: handlers.ErrorDetail{
+					Message: fmt.Sprintf("model %q not found", imageModel),
+					Type:    "invalid_request_error",
+				},
+			})
+			return
+		}
+	}
+
 	if rejectUnsupportedImagesModel(c, imageModel) {
 		return
 	}

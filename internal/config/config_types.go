@@ -1026,7 +1026,7 @@ type OpenAICompatibilityModel struct {
 	// Alias is the model name alias that clients will use to reference this model.
 	Alias string `yaml:"alias" json:"alias"`
 
-	// Capability and Type identify native non-chat capabilities: embedding, rerank, or asr.
+	// Capability and Type identify native non-chat capabilities: embedding, rerank, asr, image, or video.
 	Capability string `yaml:"capability,omitempty" json:"capability,omitempty"`
 	Type       string `yaml:"type,omitempty" json:"type,omitempty"`
 

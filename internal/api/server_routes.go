@@ -83,6 +83,8 @@ func (s *Server) setupRoutes() {
 		v1.POST("/embeddings", openaiHandlers.Embeddings)
 		v1.POST("/rerank", openaiHandlers.Rerank)
 		v1.POST("/audio/transcriptions", openaiHandlers.AudioTranscriptions)
+		v1.POST("/video/submit", openaiHandlers.VideoSubmit)
+		v1.POST("/video/status", openaiHandlers.VideoStatus)
 		v1.POST("/tts", openaiHandlers.XAITTS)
 		v1.POST("/messages", claudeCodeHandlers.ClaudeMessages)
 		v1.POST("/messages/count_tokens", claudeCodeHandlers.ClaudeCountTokens)

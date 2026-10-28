@@ -77,6 +77,17 @@ type Record struct {
 	Detail      Detail
 	// ResponseHeaders stores a snapshot of upstream response headers for usage sinks.
 	ResponseHeaders http.Header
+
+	// Capability identifies non-chat capabilities (e.g. embedding, rerank, asr, tts, image, video).
+	Capability string
+	// BillingUnit describes the unit of billing (e.g. tokens, audio_seconds, characters, images, video_tasks).
+	BillingUnit string
+	// Quantity is the primary metric count billed.
+	Quantity float64
+	// InputQuantity is the input-side metric count (e.g. input tokens, audio seconds).
+	InputQuantity float64
+	// OutputQuantity is the output-side metric count (e.g. generated images, output tokens).
+	OutputQuantity float64
 }
 
 // FailureStreamTruncatedCode marks a locally synthesized failure for an

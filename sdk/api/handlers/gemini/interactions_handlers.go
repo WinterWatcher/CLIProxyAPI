@@ -148,6 +148,7 @@ func (h *GeminiAPIHandler) handleInteractionsStream(c *gin.Context, cliCtx conte
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
 		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("X-Accel-Buffering", "no")
 		handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 		committed = true
 	}

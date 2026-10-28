@@ -24,6 +24,13 @@ func ReadRequestBody(c *gin.Context) ([]byte, error) {
 	if c != nil {
 		maxBytes = c.GetInt64(MaxRequestBodyBytesContextKey)
 	}
+	if c != nil && c.Request != nil && c.Request.Body != nil {
+		limit := maxBytes
+		if limit <= 0 {
+			limit = 64 << 20
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+	}
 	raw, err := c.GetRawData()
 	if err != nil {
 		return nil, err

@@ -143,6 +143,11 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		Stream:           stream,
 		Fail:             fail,
 		ResponseHeaders:  record.ResponseHeaders,
+		Capability:       record.Capability,
+		BillingUnit:      record.BillingUnit,
+		Quantity:         record.Quantity,
+		InputQuantity:    record.InputQuantity,
+		OutputQuantity:   record.OutputQuantity,
 	}
 
 	payload, err := json.Marshal(queuedUsageDetail{
@@ -171,6 +176,11 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		EffectiveServiceTier: effectiveServiceTier,
 		ResponseServiceTier:  responseServiceTier,
 		ResponseModel:        responseModel,
+		Capability:           record.Capability,
+		BillingUnit:          record.BillingUnit,
+		Quantity:             record.Quantity,
+		InputQuantity:        record.InputQuantity,
+		OutputQuantity:       record.OutputQuantity,
 	})
 	if err != nil {
 		return
@@ -204,6 +214,11 @@ type queuedUsageDetail struct {
 	EffectiveServiceTier string                   `json:"effective_service_tier,omitempty"`
 	ResponseServiceTier  string                   `json:"response_service_tier,omitempty"`
 	ResponseModel        string                   `json:"response_model,omitempty"`
+	Capability           string                   `json:"capability,omitempty"`
+	BillingUnit          string                   `json:"billing_unit,omitempty"`
+	Quantity             float64                  `json:"quantity,omitempty"`
+	InputQuantity        float64                  `json:"input_quantity,omitempty"`
+	OutputQuantity       float64                  `json:"output_quantity,omitempty"`
 }
 
 type requestDetail struct {
@@ -223,6 +238,11 @@ type requestDetail struct {
 	Stream           bool        `json:"stream"`
 	Fail             failDetail  `json:"fail"`
 	ResponseHeaders  http.Header `json:"response_headers,omitempty"`
+	Capability       string      `json:"capability,omitempty"`
+	BillingUnit      string      `json:"billing_unit,omitempty"`
+	Quantity         float64     `json:"quantity,omitempty"`
+	InputQuantity    float64     `json:"input_quantity,omitempty"`
+	OutputQuantity   float64     `json:"output_quantity,omitempty"`
 }
 
 type tokenStats struct {
