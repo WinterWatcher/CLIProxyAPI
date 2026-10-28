@@ -65,6 +65,7 @@ func setupUsageTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) (*gin.Eng
 					{Alias: "embed-m", Name: "real-embed", Capability: "embedding"},
 					{Alias: "rerank-m", Name: "real-rerank", Capability: "rerank"},
 					{Alias: "asr-m", Name: "real-asr", Capability: "asr"},
+					{Alias: "tts-m", Name: "real-tts", Capability: "tts"},
 					{Alias: "img-m", Name: "real-img", Capability: "image"},
 					{Alias: "vid-m", Name: "real-vid", Capability: "video"},
 				},
@@ -121,6 +122,7 @@ func setupUsageTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) (*gin.Eng
 	v1.POST("/embeddings", apiHandler.Embeddings)
 	v1.POST("/rerank", apiHandler.Rerank)
 	v1.POST("/audio/transcriptions", apiHandler.AudioTranscriptions)
+	v1.POST("/audio/speech", apiHandler.AudioSpeech)
 	v1.POST("/images/generations", apiHandler.ImagesGenerations)
 	v1.POST("/video/submit", apiHandler.VideoSubmit)
 
@@ -155,11 +157,49 @@ func TestUsageEvent_Embedding(t *testing.T) {
 	}
 }
 
+func TestUsageEvent_RerankSiliconFlowTokens(t *testing.T) {
+	router, collector := setupUsageTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"index":0,"relevance_score":0.9}],"meta":{"tokens":{"input_tokens":10}}}`))
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/rerank", strings.NewReader(`{"model":"rerank-m","query":"q","documents":["d"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", resp.Code, resp.Body.String())
+	}
+	r := collector.WaitLast(t, time.Second)
+	if r.Quantity != 10 || r.InputQuantity != 10 {
+		t.Fatalf("quantity = %v, inQty = %v, want 10", r.Quantity, r.InputQuantity)
+	}
+}
+
+func TestUsageEvent_TTSCountsUnicodeCharacters(t *testing.T) {
+	router, collector := setupUsageTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte{0xff, 0xfb, 0x90, 0x64})
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/audio/speech", strings.NewReader(`{"model":"tts-m","input":"测试"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", resp.Code, resp.Body.String())
+	}
+	r := collector.WaitLast(t, time.Second)
+	if r.BillingUnit != "characters" || r.Quantity != 2 || r.InputQuantity != 2 {
+		t.Fatalf("billing = %q quantity = %v inQty = %v, want characters/2/2", r.BillingUnit, r.Quantity, r.InputQuantity)
+	}
+}
+
 func TestUsageEvent_ASR_NoFabricatedTokens(t *testing.T) {
 	router, collector := setupUsageTestEnv(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"text":"hello transcription","duration":15.5}`))
+		_, _ = w.Write([]byte(`{"text":"hello transcription","usage":{"type":"duration","seconds":15.5}}`))
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", strings.NewReader(`{"model":"asr-m"}`))

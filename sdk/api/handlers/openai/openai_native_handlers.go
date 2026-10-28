@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -151,6 +152,9 @@ func emitNativeUsageRecord(c *gin.Context, provider, requestedModel, model, capa
 		if inTokens == 0 {
 			inTokens = gjson.GetBytes(respBody, "usage.total_tokens").Int()
 		}
+		if inTokens == 0 {
+			inTokens = gjson.GetBytes(respBody, "meta.tokens.input_tokens").Int()
+		}
 		if inTokens > 0 {
 			quantity = float64(inTokens)
 			inQty = float64(inTokens)
@@ -160,13 +164,16 @@ func emitNativeUsageRecord(c *gin.Context, provider, requestedModel, model, capa
 	case "asr":
 		billingUnit = "audio_seconds"
 		duration := gjson.GetBytes(respBody, "duration").Float()
+		if duration == 0 {
+			duration = gjson.GetBytes(respBody, "usage.seconds").Float()
+		}
 		if duration > 0 {
 			quantity = duration
 			inQty = duration
 		}
 	case "tts", "speech":
 		billingUnit = "characters"
-		chars := float64(len(gjson.GetBytes(reqBody, "input").String()))
+		chars := float64(utf8.RuneCountInString(gjson.GetBytes(reqBody, "input").String()))
 		if chars > 0 {
 			quantity = chars
 			inQty = chars
