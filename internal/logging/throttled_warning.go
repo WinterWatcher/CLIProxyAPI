@@ -24,7 +24,7 @@ func WarnThrottled(key string, interval time.Duration, msg string) bool {
 		return false
 	}
 	dropped := warnThrottleDrop[key]
-	warnThrottleDrop[key] = 0
+	delete(warnThrottleDrop, key)
 	warnThrottleMap[key] = now
 	warnThrottleMu.Unlock()
 

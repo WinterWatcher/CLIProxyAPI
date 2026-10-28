@@ -875,16 +875,16 @@ func headerValueFromHTTPHeader(headers http.Header, name string) string {
 
 // IsCodexClientRequest reports whether the request originates from a Codex client.
 func IsCodexClientRequest(ctx context.Context, clientHeaders ...http.Header) bool {
+	for _, headers := range clientHeaders {
+		if headers != nil {
+			return IsCodexClientUserAgent(headerValueFromHTTPHeader(headers, "User-Agent"))
+		}
+	}
 	if ctx != nil {
 		if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil && ginCtx.Request != nil {
 			if IsCodexClientUserAgent(headerValueFromHTTPHeader(ginCtx.Request.Header, "User-Agent")) {
 				return true
 			}
-		}
-	}
-	for _, headers := range clientHeaders {
-		if IsCodexClientUserAgent(headerValueFromHTTPHeader(headers, "User-Agent")) {
-			return true
 		}
 	}
 	return false
