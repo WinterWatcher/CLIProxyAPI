@@ -121,7 +121,9 @@ func (h *OpenAIAPIHandler) executeNative(c *gin.Context, cfg *config.Config, pro
 		},
 	}
 	start := time.Now()
-	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, capability), []string{providerKey}, coreexecutor.Request{Model: model, Payload: body, Format: "openai"}, opts)
+	// Select credentials with the public model ID registered in the auth pool.
+	// The payload already contains the provider's upstream model ID.
+	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, capability), []string{providerKey}, coreexecutor.Request{Model: requested, Payload: body, Format: "openai"}, opts)
 	emitNativeUsageRecord(c, provider, requested, model, capability, body, resp.Payload, start, err)
 	if err != nil {
 		if re, ok := err.(nativeRouteError); ok {
@@ -319,7 +321,7 @@ func (h *OpenAIAPIHandler) VideoSubmit(c *gin.Context) {
 		},
 	}
 	start := time.Now()
-	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, "video"), []string{providerKey}, coreexecutor.Request{Model: upstream, Payload: body, Format: "openai"}, opts)
+	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, "video"), []string{providerKey}, coreexecutor.Request{Model: model, Payload: body, Format: "openai"}, opts)
 	emitNativeUsageRecord(c, provider, model, upstream, "video", body, resp.Payload, start, err)
 	if err != nil {
 		if re, ok := err.(nativeRouteError); ok {

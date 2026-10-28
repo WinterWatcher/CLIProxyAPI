@@ -92,10 +92,11 @@ func setupUsageTestEnv(t *testing.T, upstreamHandler http.HandlerFunc) (*gin.Eng
 
 			var regModels []*registry.ModelInfo
 			for _, m := range p.Models {
-				regModels = append(regModels, &registry.ModelInfo{ID: m.Name})
-				if m.Alias != "" {
-					regModels = append(regModels, &registry.ModelInfo{ID: m.Alias})
+				publicModel := m.Alias
+				if publicModel == "" {
+					publicModel = m.Name
 				}
+				regModels = append(regModels, &registry.ModelInfo{ID: publicModel})
 			}
 			modelRegistry.RegisterClient(authID, pKey, regModels)
 			t.Cleanup(func() {
