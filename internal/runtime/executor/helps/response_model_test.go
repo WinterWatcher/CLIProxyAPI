@@ -193,6 +193,7 @@ func TestIsModelSubstituted(t *testing.T) {
 // setupResponseModelLoggerHook captures warnings from the process-global logrus logger.
 func setupResponseModelLoggerHook(t *testing.T) *logtest.Hook {
 	t.Helper()
+	ResetGlobalModelSubstitutionThrottle()
 	logger := log.StandardLogger()
 	oldLevel := logger.GetLevel()
 	logger.SetLevel(log.WarnLevel)
@@ -202,6 +203,7 @@ func setupResponseModelLoggerHook(t *testing.T) *logtest.Hook {
 	t.Cleanup(func() {
 		logger.SetLevel(oldLevel)
 		logger.ReplaceHooks(savedHooks)
+		ResetGlobalModelSubstitutionThrottle()
 	})
 	return hook
 }
@@ -362,7 +364,7 @@ func TestUsageReporterWarnsOnceUnderConcurrentObservationsAndPublishes(t *testin
 }
 
 // Relies on the global logrus logger; do not add t.Parallel.
-func TestUsageReporterEmitsWarningOnRepeatedSubstitutionsWithoutThrottle(t *testing.T) {
+func TestUsageReporterEmitsWarningOnRepeatedSubstitutionsWithThrottle(t *testing.T) {
 	hook := setupResponseModelLoggerHook(t)
 	ctx := context.Background()
 
@@ -375,14 +377,14 @@ func TestUsageReporterEmitsWarningOnRepeatedSubstitutionsWithoutThrottle(t *test
 
 	publishSubstitutedAttempt("codex-auth-1", "auth-index-7")
 	publishSubstitutedAttempt("codex-auth-1", "auth-index-7")
-	if warnings := substitutionWarnings(hook); len(warnings) != 2 {
-		t.Fatalf("substitution warnings = %d, want 2 without throttle: %#v", len(warnings), warnings)
+	if warnings := substitutionWarnings(hook); len(warnings) != 1 {
+		t.Fatalf("substitution warnings = %d, want 1 with throttle: %#v", len(warnings), warnings)
 	}
 
-	// A different credential is also recorded without throttle.
+	// A different credential is also recorded without being suppressed by the first credential.
 	publishSubstitutedAttempt("codex-auth-2", "auth-index-8")
-	if warnings := substitutionWarnings(hook); len(warnings) != 3 {
-		t.Fatalf("substitution warnings = %d, want 3: %#v", len(warnings), warnings)
+	if warnings := substitutionWarnings(hook); len(warnings) != 2 {
+		t.Fatalf("substitution warnings = %d, want 2 for distinct credentials: %#v", len(warnings), warnings)
 	}
 }
 

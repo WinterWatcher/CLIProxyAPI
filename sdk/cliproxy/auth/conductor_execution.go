@@ -1876,7 +1876,11 @@ func debugLogAuthSelection(entry *log.Entry, auth *Auth, provider string, model 
 	}
 	switch accountType {
 	case "api_key":
-		entry.Debugf("Use API key %s for model %s%s", util.HideAPIKey(accountInfo), model, suffix)
+		keyLabel := util.HideAPIKey(accountInfo)
+		if strings.HasPrefix(accountInfo, "sk-") {
+			keyLabel = util.RedactAuthIdentifier(accountInfo)
+		}
+		entry.Debugf("Use API key %s for model %s%s", keyLabel, model, suffix)
 	case "oauth":
 		ident := formatOauthIdentity(auth, provider, accountInfo)
 		entry.Debugf("Use OAuth %s for model %s%s", ident, model, suffix)
@@ -1906,10 +1910,13 @@ func formatOauthIdentity(auth *Auth, provider string, accountInfo string) string
 		parts = append(parts, "provider="+providerName)
 	}
 	if authFile != "" {
+		if strings.Contains(authFile, "@") || strings.HasSuffix(strings.ToLower(authFile), ".json") || util.IsSensitiveAuthIdentifier(authFile) {
+			authFile = util.RedactAuthIdentifier(authFile)
+		}
 		parts = append(parts, "auth_file="+authFile)
 	}
 	if len(parts) == 0 {
-		return accountInfo
+		return util.RedactAuthIdentifier(accountInfo)
 	}
 	return strings.Join(parts, " ")
 }
@@ -1921,18 +1928,29 @@ func formatAuthIdentity(auth *Auth, provider string) string {
 	accountType, accountInfo := auth.AccountInfo()
 	switch accountType {
 	case "api_key":
+		if strings.HasPrefix(accountInfo, "sk-") {
+			return fmt.Sprintf("api_key=%s", util.RedactAuthIdentifier(accountInfo))
+		}
 		return fmt.Sprintf("api_key=%s", util.HideAPIKey(accountInfo))
 	case "oauth":
 		return formatOauthIdentity(auth, provider, accountInfo)
 	default:
 		if auth.FileName != "" {
-			return fmt.Sprintf("auth_file=%s", filepath.Base(auth.FileName))
+			fileName := filepath.Base(auth.FileName)
+			if strings.Contains(fileName, "@") || strings.Contains(fileName, "oauth") {
+				fileName = util.RedactAuthIdentifier(fileName)
+			}
+			return fmt.Sprintf("auth_file=%s", fileName)
 		}
 		if auth.ID != "" {
-			return fmt.Sprintf("auth_id=%s", auth.ID)
+			id := auth.ID
+			if strings.Contains(id, "@") || strings.Contains(id, "oauth") {
+				id = util.RedactAuthIdentifier(id)
+			}
+			return fmt.Sprintf("auth_id=%s", id)
 		}
 		if accountInfo != "" {
-			return accountInfo
+			return util.RedactAuthIdentifier(accountInfo)
 		}
 		return "unknown"
 	}

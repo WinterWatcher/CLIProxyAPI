@@ -299,7 +299,18 @@ func (r *UsageReporter) warnModelSubstitution(ctx context.Context) {
 	if providerName == "" {
 		providerName = "unknown"
 	}
-	LogWithRequestID(ctx).Warnf("%s executor: upstream served model %q for requested model %q (auth_index=%s)", providerName, served, r.model, r.authIndexForLog())
+	authIndex := r.authIndexForLog()
+
+	shouldWarn, suppressed := globalModelSubstitutionThrottle.Record(providerName, r.model, served, authIndex)
+	if !shouldWarn {
+		return
+	}
+
+	if suppressed > 0 {
+		LogWithRequestID(ctx).Warnf("%s executor: upstream served model %q for requested model %q (auth_index=%s, suppressed_repeats=%d)", providerName, served, r.model, authIndex, suppressed)
+	} else {
+		LogWithRequestID(ctx).Warnf("%s executor: upstream served model %q for requested model %q (auth_index=%s)", providerName, served, r.model, authIndex)
+	}
 }
 
 // authIndexForLog labels the credential without exposing its file name or account.

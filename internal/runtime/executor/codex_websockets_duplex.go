@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	log "github.com/sirupsen/logrus"
@@ -43,7 +44,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 	streamCtx, cancel := context.WithCancel(ctx)
 	out := make(chan cliproxyexecutor.StreamChunk)
 	// This first frame was successfully written by ExecuteStream before handoff.
-	log.Infof("codex websockets: request forwarded session=%s auth=%s url=%s event=response.create", sess.sessionID, auth.ID, initial.wsURL)
+	log.Infof("codex websockets: request forwarded session=%s auth=%s url=%s event=response.create", sess.sessionID, util.RedactAuthIdentifier(auth.ID), initial.wsURL)
 	writeErrors := make(chan error, 1)
 	// Explicit creates have their own request settings. Automatic successors
 	// inherit the preceding response settings, just as they do upstream.
@@ -258,7 +259,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 				fail(mapCodexWebsocketWriteError(sess, conn, errWrite))
 				return false
 			}
-			log.Infof("codex websockets: request forwarded session=%s auth=%s url=%s event=%s", sess.sessionID, auth.ID, initial.wsURL, gjson.GetBytes(payload, "type").String())
+			log.Infof("codex websockets: request forwarded session=%s auth=%s url=%s event=%s", sess.sessionID, util.RedactAuthIdentifier(auth.ID), initial.wsURL, gjson.GetBytes(payload, "type").String())
 			return true
 		}
 		flushPendingCreates := func() bool {
@@ -358,7 +359,7 @@ func (e *CodexWebsocketsExecutor) streamCodexDuplex(
 						fail(mapCodexWebsocketWriteError(sess, conn, errWrite))
 						return
 					}
-					log.Infof("codex websockets: request forwarded session=%s auth=%s url=%s event=response.steer", sess.sessionID, auth.ID, initial.wsURL)
+					log.Infof("codex websockets: request forwarded session=%s auth=%s url=%s event=response.steer", sess.sessionID, util.RedactAuthIdentifier(auth.ID), initial.wsURL)
 					continue
 
 				case "response.create", "response.append":
