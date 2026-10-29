@@ -53,6 +53,7 @@ type CostPolicyAudit struct {
 	QuantityKnown bool   `json:"quantity_known"`
 	Decision      string `json:"decision"`
 	Reason        string `json:"reason"`
+	ContentHash   string `json:"content_hash,omitempty"`
 }
 
 // GateDecision encapsulates the outcome of a preflight cost policy evaluation.
@@ -67,6 +68,8 @@ type GateDecision struct {
 	BillingUnit         string          `json:"billing_unit"`
 	EstimatedCost       CostEstimate    `json:"estimated_cost"`
 	MaxRequestCostNanos int64           `json:"max_request_cost_nanos,omitempty"`
+	PolicyVersion       string          `json:"policy_version,omitempty"`
+	ContentHash         string          `json:"content_hash,omitempty"`
 	Audit               CostPolicyAudit `json:"audit"`
 }
 
@@ -83,6 +86,7 @@ type GateRequest struct {
 	Attempt     int
 	BudgetStore BudgetStore
 	DryRun      bool
+	PolicyStore PolicyStore
 }
 
 // ResolveModelPolicy resolves the provider policy and model policy matching the request.
@@ -160,6 +164,88 @@ func EvaluatePreflight(req GateRequest) GateDecision {
 	effectiveProvider := resolvedProvider
 	if effectiveProvider == "" {
 		effectiveProvider = req.Provider
+	}
+
+	var activePolicySnapshot *PolicySnapshot
+	if req.PolicyStore != nil {
+		if snap, ok := req.PolicyStore.GetActivePolicy(req.Provider, req.Model); ok && snap != nil {
+			activePolicySnapshot = snap
+		}
+	}
+
+	if activePolicySnapshot != nil {
+		if activePolicySnapshot.IsExpired(time.Now().UnixMilli()) {
+			dec := GateDecision{
+				Allowed:       false,
+				Decision:      DecisionDeny,
+				Code:          CodePricePolicyViolation,
+				Reason:        ReasonUnknownPrice,
+				Provider:      effectiveProvider,
+				Model:         req.Model,
+				PriceStatus:   config.PriceStatusUnknown,
+				PolicyVersion: activePolicySnapshot.PolicyVersion,
+				ContentHash:   activePolicySnapshot.ContentHash,
+				Audit: CostPolicyAudit{
+					PolicyEnabled: true,
+					PolicyVersion: activePolicySnapshot.PolicyVersion,
+					PriceStatus:   config.PriceStatusUnknown,
+					Provider:      effectiveProvider,
+					Model:         req.Model,
+					Decision:      DecisionDeny,
+					Reason:        "policy_expired",
+					ContentHash:   activePolicySnapshot.ContentHash,
+				},
+			}
+			recordGateAudit(dec, resolvedUpstream, req.RequestID, req.Attempt)
+			return dec
+		}
+
+		if strings.EqualFold(activePolicySnapshot.PriceStatus, "unknown") {
+			dec := GateDecision{
+				Allowed:       false,
+				Decision:      DecisionDeny,
+				Code:          CodePricePolicyViolation,
+				Reason:        ReasonUnknownPrice,
+				Provider:      effectiveProvider,
+				Model:         req.Model,
+				PriceStatus:   config.PriceStatusUnknown,
+				PolicyVersion: activePolicySnapshot.PolicyVersion,
+				ContentHash:   activePolicySnapshot.ContentHash,
+				Audit: CostPolicyAudit{
+					PolicyEnabled: true,
+					PolicyVersion: activePolicySnapshot.PolicyVersion,
+					PriceStatus:   config.PriceStatusUnknown,
+					Provider:      effectiveProvider,
+					Model:         req.Model,
+					Decision:      DecisionDeny,
+					Reason:        ReasonUnknownPrice,
+					ContentHash:   activePolicySnapshot.ContentHash,
+				},
+			}
+			recordGateAudit(dec, resolvedUpstream, req.RequestID, req.Attempt)
+			return dec
+		}
+
+		modelPolicy = &config.ModelCostPolicy{
+			PriceStatus:             activePolicySnapshot.PriceStatus,
+			BillingUnit:             activePolicySnapshot.BillingUnit,
+			PromptPer1M:             activePolicySnapshot.PromptPer1M,
+			CompletionPer1M:         activePolicySnapshot.CompletionPer1M,
+			CachePer1M:              activePolicySnapshot.CachePer1M,
+			CacheReadPer1M:          activePolicySnapshot.CacheReadPer1M,
+			CacheCreationPer1M:      activePolicySnapshot.CacheCreationPer1M,
+			UnitPrice:               activePolicySnapshot.UnitPrice,
+			MaxRequestCost:          activePolicySnapshot.MaxRequestCostUSD,
+			PromptConfigured:        true,
+			CompletionConfigured:    true,
+			UnitPriceConfigured:     true,
+		}
+		provPolicy = &config.ProviderCostPolicy{
+			ProviderBudget: config.ProviderBudgetPolicy{
+				DailyUSD:   activePolicySnapshot.ProviderDailyBudgetUSD,
+				MonthlyUSD: activePolicySnapshot.ProviderMonthlyBudgetUSD,
+			},
+		}
 	}
 
 	// Fail-closed Rule 1: Missing model cost policy
@@ -303,6 +389,12 @@ func EvaluatePreflight(req GateRequest) GateDecision {
 				Decision:      DecisionAllow,
 				Reason:        ReasonExplicitFree,
 			},
+		}
+		if activePolicySnapshot != nil {
+			dec.PolicyVersion = activePolicySnapshot.PolicyVersion
+			dec.ContentHash = activePolicySnapshot.ContentHash
+			dec.Audit.PolicyVersion = activePolicySnapshot.PolicyVersion
+			dec.Audit.ContentHash = activePolicySnapshot.ContentHash
 		}
 		recordGateAudit(dec, resolvedUpstream, req.RequestID, req.Attempt)
 		return dec
@@ -506,6 +598,12 @@ func EvaluatePreflight(req GateRequest) GateDecision {
 			Reason:        ReasonAllowed,
 		},
 	}
+	if activePolicySnapshot != nil {
+		dec.PolicyVersion = activePolicySnapshot.PolicyVersion
+		dec.ContentHash = activePolicySnapshot.ContentHash
+		dec.Audit.PolicyVersion = activePolicySnapshot.PolicyVersion
+		dec.Audit.ContentHash = activePolicySnapshot.ContentHash
+	}
 	recordGateAudit(dec, resolvedUpstream, req.RequestID, req.Attempt)
 	return dec
 }
@@ -526,6 +624,8 @@ func recordGateAudit(dec GateDecision, upstreamModel, requestID string, attempt 
 		Reason:               dec.Reason,
 		RequestID:            requestID,
 		Attempt:              attempt,
+		PolicyVersion:        dec.PolicyVersion,
+		ContentHash:          dec.ContentHash,
 	}
 	RecordAuditEvent(ev)
 }

@@ -451,6 +451,9 @@ type BaseAPIHandler struct {
 
 	budgetStoreMu sync.Mutex
 	budgetStore   *cost.PersistentBudgetStore
+
+	policyStoreMu sync.Mutex
+	policyStore   *cost.PersistentPolicyStore
 }
 
 // NewBaseAPIHandlers creates a new API handlers instance.
@@ -515,6 +518,40 @@ func (h *BaseAPIHandler) budgetDir() string {
 		return filepath.Join(h.FullConfig.AuthDir, "budget")
 	}
 	return filepath.Join(".", "auths", "budget")
+}
+
+// SetPolicyStore sets the persistent policy store for testing or runtime injection.
+func (h *BaseAPIHandler) SetPolicyStore(store *cost.PersistentPolicyStore) {
+	if h == nil {
+		return
+	}
+	h.policyStoreMu.Lock()
+	defer h.policyStoreMu.Unlock()
+	h.policyStore = store
+}
+
+// GetPolicyStore returns the active persistent policy store, initializing it lazily if needed.
+func (h *BaseAPIHandler) GetPolicyStore() *cost.PersistentPolicyStore {
+	if h == nil {
+		return nil
+	}
+	h.policyStoreMu.Lock()
+	defer h.policyStoreMu.Unlock()
+	if h.policyStore == nil {
+		dir := h.policyDir()
+		store, err := cost.NewPersistentPolicyStore(dir)
+		if err == nil {
+			h.policyStore = store
+		}
+	}
+	return h.policyStore
+}
+
+func (h *BaseAPIHandler) policyDir() string {
+	if h != nil && h.FullConfig != nil && h.FullConfig.AuthDir != "" {
+		return filepath.Join(h.FullConfig.AuthDir, "cost_policies")
+	}
+	return filepath.Join(".", "auths", "cost_policies")
 }
 
 // UpdateClients updates the handlers' client list and configuration.

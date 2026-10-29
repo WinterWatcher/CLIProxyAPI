@@ -369,6 +369,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 			RequestID:   lifecycle.requestID(),
 			Attempt:     0,
 			BudgetStore: bStore,
+			PolicyStore: h.GetPolicyStore(),
 		})
 		if len(filterRes.AllowedProviders) == 0 {
 			primaryReason := filterRes.PrimaryDecision.Reason

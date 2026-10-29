@@ -119,6 +119,7 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 			RequestID:   lifecycle.requestID(),
 			Attempt:     0,
 			BudgetStore: bStore,
+			PolicyStore: h.GetPolicyStore(),
 		})
 		if len(filterRes.AllowedProviders) == 0 {
 			primaryReason := filterRes.PrimaryDecision.Reason
@@ -279,15 +280,18 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 	afterAuthCapture := &requestAfterAuthCapture{}
 	lifecycle := h.newRequestLifecycleTracker(ctx, handlerType, normalizedModel, originalRequestedModel, false, reqMeta, execOptions.SkipInterceptorPluginID)
 
+	bStore := h.GetBudgetStore()
 	if cfg := h.GetFullConfig(); cfg != nil && cfg.CostGuard.Enabled {
 		filterRes := cost.FilterCandidateProviders(cost.ProviderFilterRequest{
-			Config:     cfg,
-			Providers:  providers,
-			Model:      originalRequestedModel,
-			Capability: handlerType,
-			RawPayload: rawJSON,
-			RequestID:  lifecycle.requestID(),
-			Attempt:    0,
+			Config:      cfg,
+			Providers:   providers,
+			Model:       originalRequestedModel,
+			Capability:  handlerType,
+			RawPayload:  rawJSON,
+			RequestID:   lifecycle.requestID(),
+			Attempt:     0,
+			BudgetStore: bStore,
+			PolicyStore: h.GetPolicyStore(),
 		})
 		if len(filterRes.AllowedProviders) == 0 {
 			primaryReason := filterRes.PrimaryDecision.Reason

@@ -198,6 +198,14 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/meta-auth-url", s.mgmt.RequestMetaToken)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
 		mgmt.DELETE("/oauth-session", s.mgmt.CancelAuthSession)
+
+		mgmt.GET("/cost-policies", s.mgmt.GetCostPolicies)
+		mgmt.GET("/cost-policies/:provider/:model", s.mgmt.GetCostPolicyByModel)
+		mgmt.POST("/cost-policies/dry-run", s.mgmt.PostCostPoliciesDryRun)
+		mgmt.POST("/cost-policies/activate", s.mgmt.PostCostPoliciesActivate)
+		mgmt.POST("/cost-policies/rollback", s.mgmt.PostCostPoliciesRollback)
+		mgmt.POST("/cost-policies/revoke", s.mgmt.PostCostPoliciesRevoke)
+		mgmt.GET("/cost-policies/audit", s.mgmt.GetCostPoliciesAudit)
 	}
 }
 

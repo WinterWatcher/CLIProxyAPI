@@ -34,6 +34,8 @@ type CostAuditEvent struct {
 	Reason               string    `json:"reason"`
 	RequestID            string    `json:"request_id,omitempty"`
 	Attempt              int       `json:"attempt,omitempty"`
+	PolicyVersion        string    `json:"policy_version,omitempty"`
+	ContentHash          string    `json:"content_hash,omitempty"`
 }
 
 // CostAuditSink receives cost policy audit events.

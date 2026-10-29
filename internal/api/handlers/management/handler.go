@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/buildinfo"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginstore"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
@@ -63,6 +64,19 @@ type Handler struct {
 	pluginReleases          pluginReleaseCache
 	siwcOAuthFactory        func(*config.Config) siwcOAuthService
 	siwcCommitMu            sync.Mutex
+	policyStoreMu           sync.Mutex
+	policyStore             costPolicyStore
+}
+
+type costPolicyStore interface {
+	GetActivePolicy(provider, model string) (*cost.PolicySnapshot, bool)
+	ListActivePolicies() []*cost.PolicySnapshot
+	ListAuditEvents(limit, offset int) []cost.PolicyAuditEvent
+	DryRun(snap *cost.PolicySnapshot) (*cost.DryRunReport, error)
+	Activate(snap *cost.PolicySnapshot, force bool) (*cost.PolicySnapshot, error)
+	Rollback(provider, model string, targetVersion string) (*cost.PolicySnapshot, error)
+	Revoke(provider, model, version, reason string) error
+	ValidatePolicySnapshot(snap *cost.PolicySnapshot) error
 }
 
 type configReloadSnapshot struct {
@@ -516,4 +530,34 @@ func (h *Handler) updateStringField(c *gin.Context, set func(string)) {
 	defer h.mu.Unlock()
 	set(*body.Value)
 	h.persistLocked(c)
+}
+
+// GetPolicyStore returns the policy store instance, initializing it lazily if needed.
+func (h *Handler) GetPolicyStore() costPolicyStore {
+	if h == nil {
+		return nil
+	}
+	h.policyStoreMu.Lock()
+	defer h.policyStoreMu.Unlock()
+	if h.policyStore == nil {
+		dir := filepath.Join(".", "auths", "cost_policies")
+		if h.cfg != nil && h.cfg.AuthDir != "" {
+			dir = filepath.Join(h.cfg.AuthDir, "cost_policies")
+		}
+		st, err := cost.NewPersistentPolicyStore(dir)
+		if err == nil {
+			h.policyStore = st
+		}
+	}
+	return h.policyStore
+}
+
+// SetPolicyStore sets the policy store instance for testing or dependency injection.
+func (h *Handler) SetPolicyStore(st costPolicyStore) {
+	if h == nil {
+		return
+	}
+	h.policyStoreMu.Lock()
+	defer h.policyStoreMu.Unlock()
+	h.policyStore = st
 }

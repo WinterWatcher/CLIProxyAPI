@@ -124,6 +124,7 @@ func (h *OpenAIAPIHandler) executeNative(c *gin.Context, cfg *config.Config, pro
 			RawPayload:  body,
 			ContentType: contentType,
 			BudgetStore: bStore,
+			PolicyStore: h.GetPolicyStore(),
 		})
 		if len(filterRes.AllowedProviders) == 0 {
 			primaryReason := filterRes.PrimaryDecision.Reason
@@ -424,6 +425,7 @@ func (h *OpenAIAPIHandler) VideoSubmit(c *gin.Context) {
 			Measurement: cost.FromVideoSubmit(1),
 			RawPayload:  body,
 			BudgetStore: bStore,
+			PolicyStore: h.GetPolicyStore(),
 		})
 		if len(filterRes.AllowedProviders) == 0 {
 			primaryReason := filterRes.PrimaryDecision.Reason

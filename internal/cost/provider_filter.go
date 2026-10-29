@@ -52,6 +52,7 @@ type ProviderFilterRequest struct {
 	RequestID   string
 	Attempt     int
 	BudgetStore BudgetStore
+	PolicyStore PolicyStore
 }
 
 // EvaluateProviderCandidate evaluates a single provider candidate against preflight price and budget rules without reserving budget.
@@ -149,6 +150,7 @@ func FilterCandidateProviders(req ProviderFilterRequest) ProviderFilterResult {
 			RequestID:   req.RequestID,
 			Attempt:     req.Attempt,
 			BudgetStore: req.BudgetStore,
+			PolicyStore: req.PolicyStore,
 			DryRun:      true,
 		}
 		gateDec := EvaluateProviderCandidate(gateReq)
