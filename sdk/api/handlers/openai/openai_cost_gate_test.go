@@ -55,6 +55,9 @@ func setupGateTestEnv(t *testing.T, cfg *config.Config) *gateTestFixture {
 	t.Cleanup(fallbackServer.Close)
 
 	// Inject upstream URLs into config
+	if cfg != nil && cfg.CostGuard.Enabled && cfg.AuthDir == "" {
+		cfg.AuthDir = t.TempDir()
+	}
 	for i := range cfg.OpenAICompatibility {
 		if cfg.OpenAICompatibility[i].Name == "fallback-prov" {
 			cfg.OpenAICompatibility[i].BaseURL = fallbackServer.URL

@@ -27,6 +27,8 @@ type CostAuditEvent struct {
 	AmountKnown          bool      `json:"amount_known"`
 	QuantityKnown        bool      `json:"quantity_known"`
 	EstimatedAmountNanos int64     `json:"estimated_amount_nanos"`
+	ReservedAmountNanos  int64     `json:"reserved_amount_nanos,omitempty"`
+	ActualAmountNanos    int64     `json:"actual_amount_nanos,omitempty"`
 	MaxRequestCostNanos  int64     `json:"max_request_cost_nanos"`
 	Decision             string    `json:"decision"`
 	Reason               string    `json:"reason"`

@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strings"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/cost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
@@ -298,6 +301,29 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		return nil, nil, errChan
 	}
 	if routeDecision.ExecutorPluginID != "" {
+		if cfg := h.GetFullConfig(); cfg != nil && cfg.CostGuard.Enabled {
+			_, modelPolicy, _, _ := cost.ResolveModelPolicy(cfg, routeDecision.ExecutorPluginID, originalRequestedModel, entryProtocol)
+			if modelPolicy == nil || strings.EqualFold(strings.TrimSpace(modelPolicy.PriceStatus), config.PriceStatusUnknown) {
+				errBody, status := cost.BuildGateErrorResponse(cost.GateDecision{
+					Allowed:     false,
+					Decision:    cost.DecisionDeny,
+					Code:        cost.CodePricePolicyViolation,
+					Reason:      cost.ReasonUnknownPrice,
+					Provider:    routeDecision.ExecutorPluginID,
+					Model:       originalRequestedModel,
+					BillingUnit: config.BillingUnitTokens,
+				})
+				errChan := make(chan *interfaces.ErrorMessage, 1)
+				errChan <- &interfaces.ErrorMessage{
+					StatusCode:     status,
+					DirectResponse: true,
+					Body:           errBody,
+					Error:          fmt.Errorf("price_policy_violation: unknown_price"),
+				}
+				close(errChan)
+				return nil, nil, errChan
+			}
+		}
 		return h.streamWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
 	}
 	providers, normalizedModel, errMsg := h.providersForExecution(modelName, originalRequestedModel, allowImageModel, routeDecision, execOptions)
@@ -309,31 +335,6 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	}
 	providers = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
 
-	if cfg := h.GetFullConfig(); cfg != nil && cfg.CostGuard.Enabled {
-		targetProvider := ""
-		if len(providers) > 0 {
-			targetProvider = providers[0]
-		}
-		gateDec := cost.EvaluatePreflight(cost.GateRequest{
-			Config:     cfg,
-			Provider:   targetProvider,
-			Model:      originalRequestedModel,
-			Capability: entryProtocol,
-			RawPayload: rawJSON,
-		})
-		if !gateDec.Allowed {
-			errBody, status := cost.BuildGateErrorResponse(gateDec)
-			errChan := make(chan *interfaces.ErrorMessage, 1)
-			errChan <- &interfaces.ErrorMessage{
-				StatusCode:     status,
-				DirectResponse: true,
-				Body:           errBody,
-				Error:          fmt.Errorf("price_policy_violation: %s", gateDec.Reason),
-			}
-			close(errChan)
-			return nil, nil, errChan
-		}
-	}
 	reqMeta := requestExecutionMetadata(ctx)
 	if execOptions.Path != "" {
 		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path
@@ -355,6 +356,104 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	}
 	afterAuthCapture := &requestAfterAuthCapture{}
 	lifecycle := h.newRequestLifecycleTracker(ctx, entryProtocol, normalizedModel, originalRequestedModel, true, reqMeta, execOptions.SkipInterceptorPluginID)
+
+	var reservationKey string
+	bStore := h.GetBudgetStore()
+	var filterRes cost.ProviderFilterResult
+	if cfg := h.GetFullConfig(); cfg != nil && cfg.CostGuard.Enabled {
+		filterRes = cost.FilterCandidateProviders(cost.ProviderFilterRequest{
+			Config:      cfg,
+			Providers:   providers,
+			Model:       originalRequestedModel,
+			Capability:  entryProtocol,
+			RawPayload:  rawJSON,
+			RequestID:   lifecycle.requestID(),
+			Attempt:     0,
+			BudgetStore: bStore,
+		})
+		if len(filterRes.AllowedProviders) == 0 {
+			primaryReason := filterRes.PrimaryDecision.Reason
+			if primaryReason == "" {
+				primaryReason = cost.ReasonUnknownPrice
+			}
+			errBody, status := cost.BuildGateErrorResponse(cost.GateDecision{
+				Allowed:             false,
+				Decision:            cost.DecisionDeny,
+				Code:                cost.CodePricePolicyViolation,
+				Reason:              primaryReason,
+				Provider:            filterRes.PrimaryDecision.Provider,
+				Model:               originalRequestedModel,
+				BillingUnit:         filterRes.PrimaryDecision.BillingUnit,
+				EstimatedCost:       filterRes.PrimaryDecision.EstimatedCost,
+				MaxRequestCostNanos: filterRes.PrimaryDecision.MaxRequestCostNanos,
+			})
+			errChan := make(chan *interfaces.ErrorMessage, 1)
+			errChan <- &interfaces.ErrorMessage{
+				StatusCode:     status,
+				DirectResponse: true,
+				Body:           errBody,
+				Error:          fmt.Errorf("price_policy_violation: %s", primaryReason),
+			}
+			close(errChan)
+			return nil, nil, errChan
+		}
+
+		providers = filterRes.AllowedProviders
+
+		provPolicy, primaryModelPol, _, _ := cost.ResolveModelPolicy(cfg, filterRes.AllowedProviders[0], originalRequestedModel, entryProtocol)
+		guard := cost.NewFallbackGuard(
+			cfg,
+			filterRes.AllowedProviders[0],
+			originalRequestedModel,
+			entryProtocol,
+			filterRes.PrimaryDecision.EstimatedCost,
+			primaryModelPol,
+			filterRes.AllowedProviders,
+			cost.Measurement{},
+			lifecycle.requestID(),
+		)
+		ctx = cost.WithFallbackGuard(ctx, guard)
+
+		if bStore != nil && filterRes.PrimaryDecision.EstimatedCost.AmountNanos > 0 {
+			reservationKey = fmt.Sprintf("%s-att-%d", lifecycle.requestID(), 0)
+			var dailyLimit, monthlyLimit int64
+			if provPolicy != nil {
+				dailyLimit = int64(math.Round(provPolicy.ProviderBudget.DailyUSD * float64(cost.NanosPerUSD)))
+				monthlyLimit = int64(math.Round(provPolicy.ProviderBudget.MonthlyUSD * float64(cost.NanosPerUSD)))
+			}
+			_, errReserve := bStore.Reserve(ctx, cost.ReservationRequest{
+				ReservationKey:    reservationKey,
+				RequestID:         lifecycle.requestID(),
+				Provider:          filterRes.AllowedProviders[0],
+				Model:             originalRequestedModel,
+				BillingUnit:       filterRes.PrimaryDecision.BillingUnit,
+				AmountNanos:       filterRes.PrimaryDecision.EstimatedCost.AmountNanos,
+				DailyLimitNanos:   dailyLimit,
+				MonthlyLimitNanos: monthlyLimit,
+			})
+			if errReserve != nil {
+				errBody, status := cost.BuildGateErrorResponse(cost.GateDecision{
+					Allowed:     false,
+					Decision:    cost.DecisionDeny,
+					Code:        cost.CodePricePolicyViolation,
+					Reason:      cost.ReasonProviderBudgetExceeded,
+					Provider:    filterRes.AllowedProviders[0],
+					Model:       originalRequestedModel,
+					BillingUnit: filterRes.PrimaryDecision.BillingUnit,
+				})
+				errChan := make(chan *interfaces.ErrorMessage, 1)
+				errChan <- &interfaces.ErrorMessage{
+					StatusCode:     status,
+					DirectResponse: true,
+					Body:           errBody,
+					Error:          fmt.Errorf("price_policy_violation: provider_budget_exceeded"),
+				}
+				close(errChan)
+				return nil, nil, errChan
+			}
+		}
+	}
+
 	opts := coreexecutor.Options{
 		Stream:                      true,
 		Alt:                         alt,
@@ -381,6 +480,9 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	ctx = enrichContextWithSessionHierarchy(ctx, opts.Headers, req.Payload, opts.Metadata)
 	streamResult, err := h.AuthManager.ExecuteStream(ctx, providers, req, opts)
 	if err != nil {
+		if bStore != nil && reservationKey != "" {
+			_ = bStore.Release(ctx, reservationKey, "stream_failed")
+		}
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
 		errMsg := executionErrorMessage(err)
 		lifecycle.completeError(ctx, errMsg)
@@ -388,6 +490,9 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		errChan <- errMsg
 		close(errChan)
 		return nil, nil, errChan
+	}
+	if bStore != nil && reservationKey != "" {
+		_ = bStore.Settle(ctx, reservationKey, filterRes.PrimaryDecision.EstimatedCost.AmountNanos, 0, 0)
 	}
 	if streamResult == nil {
 		errMsg := &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("auth manager returned nil stream")}

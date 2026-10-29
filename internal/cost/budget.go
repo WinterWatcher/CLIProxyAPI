@@ -32,8 +32,9 @@ type BudgetStore interface {
 	CurrentProviderMonthly(ctx context.Context, provider string) (int64, error)
 	CurrentGlobalDaily(ctx context.Context) (int64, error)
 	CurrentGlobalMonthly(ctx context.Context) (int64, error)
-	Reserve(ctx context.Context, provider string, amountNanos int64, dailyLimitNanos, monthlyLimitNanos int64) (Reservation, error)
-	Release(ctx context.Context, res Reservation) error
+	Reserve(ctx context.Context, req ReservationRequest) (Reservation, error)
+	Release(ctx context.Context, reservationKey, reason string) error
+	Settle(ctx context.Context, reservationKey string, actualAmountNanos int64, dailyLimitNanos, monthlyLimitNanos int64) error
 }
 
 // MemoryBudgetStore provides a thread-safe, in-memory implementation of BudgetStore.
@@ -85,35 +86,42 @@ func (s *MemoryBudgetStore) CurrentGlobalMonthly(_ context.Context) (int64, erro
 }
 
 // Reserve atomically checks budget limits and holds the requested amount to prevent over-allocation.
-func (s *MemoryBudgetStore) Reserve(_ context.Context, provider string, amountNanos int64, dailyLimitNanos, monthlyLimitNanos int64) (Reservation, error) {
+func (s *MemoryBudgetStore) Reserve(_ context.Context, req ReservationRequest) (Reservation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if amountNanos < 0 {
+	if req.AmountNanos < 0 {
 		return Reservation{}, errors.New("cannot reserve negative amount")
 	}
 
-	currentDaily := s.providerDaily[provider]
-	if dailyLimitNanos > 0 && currentDaily+amountNanos > dailyLimitNanos {
-		return Reservation{}, fmt.Errorf("%w: provider daily limit exceeded (current=%d, req=%d, limit=%d)", ErrBudgetExceeded, currentDaily, amountNanos, dailyLimitNanos)
+	if existing, exists := s.reservations[req.ReservationKey]; exists {
+		return existing, nil
 	}
 
-	currentMonth := s.providerMonth[provider]
-	if monthlyLimitNanos > 0 && currentMonth+amountNanos > monthlyLimitNanos {
-		return Reservation{}, fmt.Errorf("%w: provider monthly limit exceeded (current=%d, req=%d, limit=%d)", ErrBudgetExceeded, currentMonth, amountNanos, monthlyLimitNanos)
+	currentDaily := s.providerDaily[req.Provider]
+	if req.DailyLimitNanos > 0 && currentDaily+req.AmountNanos > req.DailyLimitNanos {
+		return Reservation{}, fmt.Errorf("%w: provider daily limit exceeded (current=%d, req=%d, limit=%d)", ErrBudgetExceeded, currentDaily, req.AmountNanos, req.DailyLimitNanos)
 	}
 
-	s.providerDaily[provider] += amountNanos
-	s.providerMonth[provider] += amountNanos
-	s.globalDaily += amountNanos
-	s.globalMonth += amountNanos
+	currentMonth := s.providerMonth[req.Provider]
+	if req.MonthlyLimitNanos > 0 && currentMonth+req.AmountNanos > req.MonthlyLimitNanos {
+		return Reservation{}, fmt.Errorf("%w: provider monthly limit exceeded (current=%d, req=%d, limit=%d)", ErrBudgetExceeded, currentMonth, req.AmountNanos, req.MonthlyLimitNanos)
+	}
+
+	s.providerDaily[req.Provider] += req.AmountNanos
+	s.providerMonth[req.Provider] += req.AmountNanos
+	s.globalDaily += req.AmountNanos
+	s.globalMonth += req.AmountNanos
 
 	s.reservationSeq++
-	resID := fmt.Sprintf("res-%d", s.reservationSeq)
+	resID := req.ReservationKey
+	if resID == "" {
+		resID = fmt.Sprintf("res-%d", s.reservationSeq)
+	}
 	res := Reservation{
 		ID:          resID,
-		Provider:    provider,
-		AmountNanos: amountNanos,
+		Provider:    req.Provider,
+		AmountNanos: req.AmountNanos,
 		ReservedAt:  time.Now(),
 	}
 	s.reservations[resID] = res
@@ -121,14 +129,15 @@ func (s *MemoryBudgetStore) Reserve(_ context.Context, provider string, amountNa
 }
 
 // Release releases a previously reserved amount.
-func (s *MemoryBudgetStore) Release(_ context.Context, res Reservation) error {
+func (s *MemoryBudgetStore) Release(_ context.Context, reservationKey, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.reservations[res.ID]; !exists {
-		return ErrReservationNotFound
+	res, exists := s.reservations[reservationKey]
+	if !exists {
+		return nil
 	}
-	delete(s.reservations, res.ID)
+	delete(s.reservations, reservationKey)
 
 	s.providerDaily[res.Provider] -= res.AmountNanos
 	if s.providerDaily[res.Provider] < 0 {
@@ -150,5 +159,22 @@ func (s *MemoryBudgetStore) Release(_ context.Context, res Reservation) error {
 		s.globalMonth = 0
 	}
 
+	return nil
+}
+
+// Settle finalizes a reservation in memory.
+func (s *MemoryBudgetStore) Settle(_ context.Context, reservationKey string, actualAmountNanos int64, dailyLimitNanos, monthlyLimitNanos int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	res, exists := s.reservations[reservationKey]
+	if !exists {
+		return nil
+	}
+	diff := actualAmountNanos - res.AmountNanos
+	s.providerDaily[res.Provider] += diff
+	s.providerMonth[res.Provider] += diff
+	s.globalDaily += diff
+	s.globalMonth += diff
 	return nil
 }

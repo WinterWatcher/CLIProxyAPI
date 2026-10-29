@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
@@ -446,6 +448,9 @@ type BaseAPIHandler struct {
 	// ModelRouterHost optionally routes matching requests to a plugin executor, the router's own
 	// executor, or a built-in provider before model-to-provider resolution and auth selection.
 	ModelRouterHost PluginModelRouterHost
+
+	budgetStoreMu sync.Mutex
+	budgetStore   *cost.PersistentBudgetStore
 }
 
 // NewBaseAPIHandlers creates a new API handlers instance.
@@ -476,6 +481,40 @@ func (h *BaseAPIHandler) GetFullConfig() *config.Config {
 		return nil
 	}
 	return h.FullConfig
+}
+
+// SetBudgetStore sets the persistent budget store for testing or runtime injection.
+func (h *BaseAPIHandler) SetBudgetStore(store *cost.PersistentBudgetStore) {
+	if h == nil {
+		return
+	}
+	h.budgetStoreMu.Lock()
+	defer h.budgetStoreMu.Unlock()
+	h.budgetStore = store
+}
+
+// GetBudgetStore returns the active persistent budget store, initializing it lazily if needed.
+func (h *BaseAPIHandler) GetBudgetStore() *cost.PersistentBudgetStore {
+	if h == nil {
+		return nil
+	}
+	h.budgetStoreMu.Lock()
+	defer h.budgetStoreMu.Unlock()
+	if h.budgetStore == nil {
+		dir := h.budgetDir()
+		store, err := cost.NewPersistentBudgetStore(dir)
+		if err == nil {
+			h.budgetStore = store
+		}
+	}
+	return h.budgetStore
+}
+
+func (h *BaseAPIHandler) budgetDir() string {
+	if h != nil && h.FullConfig != nil && h.FullConfig.AuthDir != "" {
+		return filepath.Join(h.FullConfig.AuthDir, "budget")
+	}
+	return filepath.Join(".", "auths", "budget")
 }
 
 // UpdateClients updates the handlers' client list and configuration.

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -107,21 +108,87 @@ func (h *OpenAIAPIHandler) NativeOpenAICompat(c *gin.Context, capability string)
 }
 
 func (h *OpenAIAPIHandler) executeNative(c *gin.Context, cfg *config.Config, provider, requested, model, capability string, body []byte, contentType string) {
+	var reservationKey string
+	bStore := h.GetBudgetStore()
+	var filterRes cost.ProviderFilterResult
+	execCtx := context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, capability)
+
 	if cfg != nil && cfg.CostGuard.Enabled {
 		measurement := cost.ExtractNativeMeasurement(capability, body, contentType)
-		dec := cost.EvaluatePreflight(cost.GateRequest{
+		filterRes = cost.FilterCandidateProviders(cost.ProviderFilterRequest{
 			Config:      cfg,
-			Provider:    provider,
+			Providers:   []string{provider},
 			Model:       requested,
 			Capability:  capability,
 			Measurement: measurement,
 			RawPayload:  body,
 			ContentType: contentType,
+			BudgetStore: bStore,
 		})
-		if !dec.Allowed {
-			errBody, status := cost.BuildGateErrorResponse(dec)
+		if len(filterRes.AllowedProviders) == 0 {
+			primaryReason := filterRes.PrimaryDecision.Reason
+			if primaryReason == "" {
+				primaryReason = cost.ReasonUnknownPrice
+			}
+			errBody, status := cost.BuildGateErrorResponse(cost.GateDecision{
+				Allowed:             false,
+				Decision:            cost.DecisionDeny,
+				Code:                cost.CodePricePolicyViolation,
+				Reason:              primaryReason,
+				Provider:            filterRes.PrimaryDecision.Provider,
+				Model:               requested,
+				BillingUnit:         filterRes.PrimaryDecision.BillingUnit,
+				EstimatedCost:       filterRes.PrimaryDecision.EstimatedCost,
+				MaxRequestCostNanos: filterRes.PrimaryDecision.MaxRequestCostNanos,
+			})
 			c.Data(status, "application/json", errBody)
 			return
+		}
+
+		provider = filterRes.AllowedProviders[0]
+		provPolicy, primaryModelPol, _, _ := cost.ResolveModelPolicy(cfg, provider, requested, capability)
+		guard := cost.NewFallbackGuard(
+			cfg,
+			provider,
+			requested,
+			capability,
+			filterRes.PrimaryDecision.EstimatedCost,
+			primaryModelPol,
+			filterRes.AllowedProviders,
+			measurement,
+			"",
+		)
+		execCtx = cost.WithFallbackGuard(execCtx, guard)
+
+		if bStore != nil && filterRes.PrimaryDecision.EstimatedCost.AmountNanos > 0 {
+			reservationKey = fmt.Sprintf("native-%s-%d", requested, time.Now().UnixNano())
+			var dailyLimit, monthlyLimit int64
+			if provPolicy != nil {
+				dailyLimit = int64(math.Round(provPolicy.ProviderBudget.DailyUSD * float64(cost.NanosPerUSD)))
+				monthlyLimit = int64(math.Round(provPolicy.ProviderBudget.MonthlyUSD * float64(cost.NanosPerUSD)))
+			}
+			_, errReserve := bStore.Reserve(execCtx, cost.ReservationRequest{
+				ReservationKey:    reservationKey,
+				Provider:          provider,
+				Model:             requested,
+				BillingUnit:       filterRes.PrimaryDecision.BillingUnit,
+				AmountNanos:       filterRes.PrimaryDecision.EstimatedCost.AmountNanos,
+				DailyLimitNanos:   dailyLimit,
+				MonthlyLimitNanos: monthlyLimit,
+			})
+			if errReserve != nil {
+				errBody, status := cost.BuildGateErrorResponse(cost.GateDecision{
+					Allowed:     false,
+					Decision:    cost.DecisionDeny,
+					Code:        cost.CodePricePolicyViolation,
+					Reason:      cost.ReasonProviderBudgetExceeded,
+					Provider:    provider,
+					Model:       requested,
+					BillingUnit: filterRes.PrimaryDecision.BillingUnit,
+				})
+				c.Data(status, "application/json", errBody)
+				return
+			}
 		}
 	}
 
@@ -143,9 +210,12 @@ func (h *OpenAIAPIHandler) executeNative(c *gin.Context, cfg *config.Config, pro
 	start := time.Now()
 	// Select credentials with the public model ID registered in the auth pool.
 	// The payload already contains the provider's upstream model ID.
-	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, capability), []string{providerKey}, coreexecutor.Request{Model: requested, Payload: body, Format: "openai"}, opts)
+	resp, err := h.AuthManager.Execute(execCtx, []string{providerKey}, coreexecutor.Request{Model: requested, Payload: body, Format: "openai"}, opts)
 	emitNativeUsageRecord(c, provider, requested, model, capability, body, resp.Payload, start, err)
 	if err != nil {
+		if bStore != nil && reservationKey != "" {
+			_ = bStore.Release(execCtx, reservationKey, "request_failed")
+		}
 		if re, ok := err.(nativeRouteError); ok {
 			cleanBody := sanitizeNativeErrorBody(re.ResponseBody(), compat, re.StatusCode())
 			writeNativeResponse(c, re.StatusCode(), re.ResponseHeaders(), cleanBody)
@@ -153,6 +223,9 @@ func (h *OpenAIAPIHandler) executeNative(c *gin.Context, cfg *config.Config, pro
 		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed"})
 		return
+	}
+	if bStore != nil && reservationKey != "" {
+		_ = bStore.Settle(execCtx, reservationKey, filterRes.PrimaryDecision.EstimatedCost.AmountNanos, 0, 0)
 	}
 	cleanPayload := sanitizeNativeErrorBody(resp.Payload, compat, http.StatusOK)
 	writeNativeResponse(c, http.StatusOK, resp.Headers, cleanPayload)
@@ -333,19 +406,85 @@ func (h *OpenAIAPIHandler) VideoSubmit(c *gin.Context) {
 	payload["model"] = upstream
 	body, _ = json.Marshal(payload)
 
+	var reservationKey string
+	bStore := h.GetBudgetStore()
+	var filterRes cost.ProviderFilterResult
+	execCtx := context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, "video")
+
 	if cfg != nil && cfg.CostGuard.Enabled {
-		dec := cost.EvaluatePreflight(cost.GateRequest{
+		filterRes = cost.FilterCandidateProviders(cost.ProviderFilterRequest{
 			Config:      cfg,
-			Provider:    provider,
+			Providers:   []string{provider},
 			Model:       model,
 			Capability:  "video",
 			Measurement: cost.FromVideoSubmit(1),
 			RawPayload:  body,
+			BudgetStore: bStore,
 		})
-		if !dec.Allowed {
-			errBody, status := cost.BuildGateErrorResponse(dec)
+		if len(filterRes.AllowedProviders) == 0 {
+			primaryReason := filterRes.PrimaryDecision.Reason
+			if primaryReason == "" {
+				primaryReason = cost.ReasonUnknownPrice
+			}
+			errBody, status := cost.BuildGateErrorResponse(cost.GateDecision{
+				Allowed:             false,
+				Decision:            cost.DecisionDeny,
+				Code:                cost.CodePricePolicyViolation,
+				Reason:              primaryReason,
+				Provider:            filterRes.PrimaryDecision.Provider,
+				Model:               model,
+				BillingUnit:         filterRes.PrimaryDecision.BillingUnit,
+				EstimatedCost:       filterRes.PrimaryDecision.EstimatedCost,
+				MaxRequestCostNanos: filterRes.PrimaryDecision.MaxRequestCostNanos,
+			})
 			c.Data(status, "application/json", errBody)
 			return
+		}
+
+		provider = filterRes.AllowedProviders[0]
+		provPolicy, primaryModelPol, _, _ := cost.ResolveModelPolicy(cfg, provider, model, "video")
+		guard := cost.NewFallbackGuard(
+			cfg,
+			provider,
+			model,
+			"video",
+			filterRes.PrimaryDecision.EstimatedCost,
+			primaryModelPol,
+			filterRes.AllowedProviders,
+			cost.FromVideoSubmit(1),
+			"",
+		)
+		execCtx = cost.WithFallbackGuard(execCtx, guard)
+
+		if bStore != nil && filterRes.PrimaryDecision.EstimatedCost.AmountNanos > 0 {
+			reservationKey = fmt.Sprintf("native-video-%s-%d", model, time.Now().UnixNano())
+			var dailyLimit, monthlyLimit int64
+			if provPolicy != nil {
+				dailyLimit = int64(math.Round(provPolicy.ProviderBudget.DailyUSD * float64(cost.NanosPerUSD)))
+				monthlyLimit = int64(math.Round(provPolicy.ProviderBudget.MonthlyUSD * float64(cost.NanosPerUSD)))
+			}
+			_, errReserve := bStore.Reserve(execCtx, cost.ReservationRequest{
+				ReservationKey:    reservationKey,
+				Provider:          provider,
+				Model:             model,
+				BillingUnit:       filterRes.PrimaryDecision.BillingUnit,
+				AmountNanos:       filterRes.PrimaryDecision.EstimatedCost.AmountNanos,
+				DailyLimitNanos:   dailyLimit,
+				MonthlyLimitNanos: monthlyLimit,
+			})
+			if errReserve != nil {
+				errBody, status := cost.BuildGateErrorResponse(cost.GateDecision{
+					Allowed:     false,
+					Decision:    cost.DecisionDeny,
+					Code:        cost.CodePricePolicyViolation,
+					Reason:      cost.ReasonProviderBudgetExceeded,
+					Provider:    provider,
+					Model:       model,
+					BillingUnit: filterRes.PrimaryDecision.BillingUnit,
+				})
+				c.Data(status, "application/json", errBody)
+				return
+			}
 		}
 	}
 
@@ -365,9 +504,12 @@ func (h *OpenAIAPIHandler) VideoSubmit(c *gin.Context) {
 		},
 	}
 	start := time.Now()
-	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, "video"), []string{providerKey}, coreexecutor.Request{Model: model, Payload: body, Format: "openai"}, opts)
+	resp, err := h.AuthManager.Execute(execCtx, []string{providerKey}, coreexecutor.Request{Model: model, Payload: body, Format: "openai"}, opts)
 	emitNativeUsageRecord(c, provider, model, upstream, "video", body, resp.Payload, start, err)
 	if err != nil {
+		if bStore != nil && reservationKey != "" {
+			_ = bStore.Release(execCtx, reservationKey, "request_failed")
+		}
 		if re, ok := err.(nativeRouteError); ok {
 			cleanBody := sanitizeNativeErrorBody(re.ResponseBody(), compat, re.StatusCode())
 			writeNativeResponse(c, re.StatusCode(), re.ResponseHeaders(), cleanBody)
@@ -375,6 +517,9 @@ func (h *OpenAIAPIHandler) VideoSubmit(c *gin.Context) {
 		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed"})
 		return
+	}
+	if bStore != nil && reservationKey != "" {
+		_ = bStore.Settle(execCtx, reservationKey, filterRes.PrimaryDecision.EstimatedCost.AmountNanos, 0, 0)
 	}
 
 	reqID := strings.TrimSpace(gjson.GetBytes(resp.Payload, "requestId").String())

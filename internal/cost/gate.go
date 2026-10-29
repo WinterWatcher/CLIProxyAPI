@@ -402,7 +402,20 @@ func EvaluatePreflight(req GateRequest) GateDecision {
 	if req.BudgetStore != nil && provPolicy != nil && (provPolicy.ProviderBudget.DailyUSD > 0 || provPolicy.ProviderBudget.MonthlyUSD > 0) {
 		dailyLimitNanos := int64(math.Round(provPolicy.ProviderBudget.DailyUSD * float64(NanosPerUSD)))
 		monthlyLimitNanos := int64(math.Round(provPolicy.ProviderBudget.MonthlyUSD * float64(NanosPerUSD)))
-		_, errReserve := req.BudgetStore.Reserve(context.Background(), effectiveProvider, est.AmountNanos, dailyLimitNanos, monthlyLimitNanos)
+		resKey := req.RequestID
+		if resKey == "" {
+			resKey = fmt.Sprintf("req-%s-%d", effectiveProvider, time.Now().UnixNano())
+		}
+		_, errReserve := req.BudgetStore.Reserve(context.Background(), ReservationRequest{
+			ReservationKey:    resKey,
+			RequestID:         req.RequestID,
+			Provider:          effectiveProvider,
+			Model:             req.Model,
+			BillingUnit:       est.BillingUnit,
+			AmountNanos:       est.AmountNanos,
+			DailyLimitNanos:   dailyLimitNanos,
+			MonthlyLimitNanos: monthlyLimitNanos,
+		})
 		if errReserve != nil {
 			dec := GateDecision{
 				Allowed:             false,

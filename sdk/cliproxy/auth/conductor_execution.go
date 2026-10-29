@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -520,6 +521,13 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			return cliproxyexecutor.Response{}, errPick
 		}
 
+		if guard := cost.FallbackGuardFromContext(ctx); guard != nil {
+			if ok, _ := guard.ValidateCandidateAuth(provider, routeModel); !ok {
+				tried[auth.ID] = struct{}{}
+				continue
+			}
+		}
+
 		entry := logEntryWithRequestID(ctx)
 		debugLogAuthSelection(entry, auth, provider, routeModel)
 		publishSelectedAuthMetadata(opts.Metadata, auth)
@@ -557,7 +565,12 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 		executor = executorForAuth(executor, auth)
 		var authErr error
 		didRefreshOnUnauthorized := false
-		for _, upstreamModel := range models {
+		for modelIdx, upstreamModel := range models {
+			if guard := cost.FallbackGuardFromContext(execCtx); guard != nil && modelIdx > 0 {
+				if ok, _ := guard.ValidateUpstreamModelInPool(provider, models[0], upstreamModel); !ok {
+					continue
+				}
+			}
 			execCtx = newUpstreamAttemptContext(execCtx)
 			resultModel := m.stateModelForExecution(auth, routeModel, upstreamModel, pooled)
 			execReq := req
@@ -736,6 +749,13 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			return cliproxyexecutor.Response{}, errPick
 		}
 
+		if guard := cost.FallbackGuardFromContext(ctx); guard != nil {
+			if ok, _ := guard.ValidateCandidateAuth(provider, routeModel); !ok {
+				tried[auth.ID] = struct{}{}
+				continue
+			}
+		}
+
 		entry := logEntryWithRequestID(ctx)
 		debugLogAuthSelection(entry, auth, provider, routeModel)
 		publishSelectedAuthMetadata(opts.Metadata, auth)
@@ -773,7 +793,12 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 		executor = executorForAuth(executor, auth)
 		var authErr error
 		didRefreshOnUnauthorized := false
-		for _, upstreamModel := range models {
+		for modelIdx, upstreamModel := range models {
+			if guard := cost.FallbackGuardFromContext(execCtx); guard != nil && modelIdx > 0 {
+				if ok, _ := guard.ValidateUpstreamModelInPool(provider, models[0], upstreamModel); !ok {
+					continue
+				}
+			}
 			execCtx = newUpstreamAttemptContext(execCtx)
 			resultModel := m.stateModelForExecution(auth, routeModel, upstreamModel, pooled)
 			execReq := req
