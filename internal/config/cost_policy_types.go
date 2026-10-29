@@ -94,17 +94,47 @@ type ProviderBudgetPolicy struct {
 
 // ModelCostPolicy defines price and cost constraints for an individual model.
 type ModelCostPolicy struct {
-	PriceStatus        string  `yaml:"price-status,omitempty" json:"price-status,omitempty"`
-	BillingUnit        string  `yaml:"billing-unit,omitempty" json:"billing-unit,omitempty"`
-	PromptPer1M        float64 `yaml:"prompt-per-1m,omitempty" json:"prompt-per-1m,omitempty"`
-	CompletionPer1M    float64 `yaml:"completion-per-1m,omitempty" json:"completion-per-1m,omitempty"`
-	CachePer1M         float64 `yaml:"cache-per-1m,omitempty" json:"cache-per-1m,omitempty"`
-	CacheReadPer1M     float64 `yaml:"cache-read-per-1m,omitempty" json:"cache-read-per-1m,omitempty"`
-	CacheCreationPer1M float64 `yaml:"cache-creation-per-1m,omitempty" json:"cache-creation-per-1m,omitempty"`
-	UnitPrice          float64 `yaml:"unit-price,omitempty" json:"unit-price,omitempty"`
-	MaxRequestCost     float64 `yaml:"max-request-cost,omitempty" json:"max-request-cost,omitempty"`
-	MaxDailyCost       float64 `yaml:"max-daily-cost,omitempty" json:"max-daily-cost,omitempty"`
-	OnNonzeroPrice     string  `yaml:"on-nonzero-price,omitempty" json:"on-nonzero-price,omitempty"`
+	PriceStatus             string  `yaml:"price-status,omitempty" json:"price-status,omitempty"`
+	BillingUnit             string  `yaml:"billing-unit,omitempty" json:"billing-unit,omitempty"`
+	PromptPer1M             float64 `yaml:"prompt-per-1m,omitempty" json:"prompt-per-1m,omitempty"`
+	CompletionPer1M         float64 `yaml:"completion-per-1m,omitempty" json:"completion-per-1m,omitempty"`
+	CachePer1M              float64 `yaml:"cache-per-1m,omitempty" json:"cache-per-1m,omitempty"`
+	CacheReadPer1M          float64 `yaml:"cache-read-per-1m,omitempty" json:"cache-read-per-1m,omitempty"`
+	CacheCreationPer1M      float64 `yaml:"cache-creation-per-1m,omitempty" json:"cache-creation-per-1m,omitempty"`
+	UnitPrice               float64 `yaml:"unit-price,omitempty" json:"unit-price,omitempty"`
+	MaxRequestCost          float64 `yaml:"max-request-cost,omitempty" json:"max-request-cost,omitempty"`
+	MaxDailyCost            float64 `yaml:"max-daily-cost,omitempty" json:"max-daily-cost,omitempty"`
+	OnNonzeroPrice          string  `yaml:"on-nonzero-price,omitempty" json:"on-nonzero-price,omitempty"`
+	PromptConfigured        bool    `yaml:"prompt-configured,omitempty" json:"prompt-configured,omitempty"`
+	CompletionConfigured    bool    `yaml:"completion-configured,omitempty" json:"completion-configured,omitempty"`
+	CacheConfigured         bool    `yaml:"cache-configured,omitempty" json:"cache-configured,omitempty"`
+	CacheReadConfigured     bool    `yaml:"cache-read-configured,omitempty" json:"cache-read-configured,omitempty"`
+	CacheCreationConfigured bool    `yaml:"cache-creation-configured,omitempty" json:"cache-creation-configured,omitempty"`
+	UnitPriceConfigured     bool    `yaml:"unit-price-configured,omitempty" json:"unit-price-configured,omitempty"`
+}
+
+// IsPromptConfigured returns whether prompt pricing was explicitly configured or positive.
+func (m *ModelCostPolicy) IsPromptConfigured() bool {
+	if m == nil {
+		return false
+	}
+	return m.PromptConfigured || m.PromptPer1M > 0
+}
+
+// IsCompletionConfigured returns whether completion pricing was explicitly configured or positive.
+func (m *ModelCostPolicy) IsCompletionConfigured() bool {
+	if m == nil {
+		return false
+	}
+	return m.CompletionConfigured || m.CompletionPer1M > 0
+}
+
+// IsUnitPriceConfigured returns whether unit pricing was explicitly configured or positive.
+func (m *ModelCostPolicy) IsUnitPriceConfigured() bool {
+	if m == nil {
+		return false
+	}
+	return m.UnitPriceConfigured || m.UnitPrice > 0
 }
 
 // DefaultCostGuardConfig returns standard safe defaults for CostGuardConfig.
