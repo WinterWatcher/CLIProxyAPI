@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -40,12 +41,23 @@ type PersistentReservationRecord struct {
 	ReleaseReason     string `json:"release_reason,omitempty"`
 }
 
+// PersistentBudgetState represents the complete persistent state on disk.
+type PersistentBudgetState struct {
+	Records         map[string]*PersistentReservationRecord `json:"records"`
+	FrozenProviders map[string]int64                        `json:"frozen_providers,omitempty"`
+	FrozenModels    map[string]int64                        `json:"frozen_models,omitempty"`
+	GlobalFrozen    bool                                    `json:"global_frozen,omitempty"`
+}
+
 // PersistentBudgetStore provides persistent, restart-durable, cross-process file-locked budget accounting.
 type PersistentBudgetStore struct {
-	filePath     string
-	lockFilePath string
-	memMu        sync.Mutex
-	records      map[string]*PersistentReservationRecord
+	filePath        string
+	lockFilePath    string
+	memMu           sync.Mutex
+	records         map[string]*PersistentReservationRecord
+	frozenProviders map[string]int64
+	frozenModels    map[string]int64
+	globalFrozen    bool
 }
 
 // NewPersistentBudgetStore initializes and loads a persistent budget store from disk.
@@ -57,13 +69,24 @@ func NewPersistentBudgetStore(dir string) (*PersistentBudgetStore, error) {
 		return nil, fmt.Errorf("create budget dir: %w", err)
 	}
 
+	// Clean up abandoned temp files older than a minute
+	if entries, errRead := os.ReadDir(dir); errRead == nil {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "budget_store.json.tmp.") {
+				_ = os.Remove(filepath.Join(dir, e.Name()))
+			}
+		}
+	}
+
 	filePath := filepath.Join(dir, "budget_store.json")
 	lockFilePath := filepath.Join(dir, "budget_store.lock")
 
 	store := &PersistentBudgetStore{
-		filePath:     filePath,
-		lockFilePath: lockFilePath,
-		records:      make(map[string]*PersistentReservationRecord),
+		filePath:        filePath,
+		lockFilePath:    lockFilePath,
+		records:         make(map[string]*PersistentReservationRecord),
+		frozenProviders: make(map[string]int64),
+		frozenModels:    make(map[string]int64),
 	}
 
 	if err := store.loadFromDisk(); err != nil {
@@ -83,7 +106,7 @@ func (s *PersistentBudgetStore) withFileLock(fn func() error) error {
 	}
 	defer lockFile.Close()
 
-	// Acquire cross-process exclusive advisory lock
+	// Acquire cross-process exclusive advisory lock (fail closed if locking fails)
 	if errFlock := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); errFlock != nil {
 		return fmt.Errorf("acquire file lock: %w", errFlock)
 	}
@@ -92,49 +115,115 @@ func (s *PersistentBudgetStore) withFileLock(fn func() error) error {
 	}()
 
 	// Reload latest state from disk in case another process modified it
-	_ = s.loadFromDisk()
+	if errLoad := s.loadFromDisk(); errLoad != nil {
+		return fmt.Errorf("reload from disk: %w", errLoad)
+	}
 
-	if err := fn(); err != nil {
-		return err
+	fnErr := fn()
+	if fnErr != nil && !errors.Is(fnErr, ErrBudgetOverrun) {
+		return fnErr
 	}
 
 	// Persist state atomically
-	return s.saveToDiskAtomic()
+	if errSave := s.saveToDiskAtomic(); errSave != nil {
+		return errSave
+	}
+	return fnErr
 }
 
 func (s *PersistentBudgetStore) loadFromDisk() error {
 	data, err := os.ReadFile(s.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			s.records = make(map[string]*PersistentReservationRecord)
+			s.frozenProviders = make(map[string]int64)
+			s.frozenModels = make(map[string]int64)
+			s.globalFrozen = false
 			return nil
 		}
 		return err
 	}
 	if len(data) == 0 {
+		s.records = make(map[string]*PersistentReservationRecord)
+		s.frozenProviders = make(map[string]int64)
+		s.frozenModels = make(map[string]int64)
+		s.globalFrozen = false
 		return nil
 	}
 
-	var loaded map[string]*PersistentReservationRecord
-	if errUnmarshal := json.Unmarshal(data, &loaded); errUnmarshal != nil {
-		return errUnmarshal
+	// Try unmarshaling as PersistentBudgetState
+	var state PersistentBudgetState
+	if errUnmarshal := json.Unmarshal(data, &state); errUnmarshal == nil && state.Records != nil {
+		s.records = state.Records
+		if state.FrozenProviders != nil {
+			s.frozenProviders = state.FrozenProviders
+		} else {
+			s.frozenProviders = make(map[string]int64)
+		}
+		if state.FrozenModels != nil {
+			s.frozenModels = state.FrozenModels
+		} else {
+			s.frozenModels = make(map[string]int64)
+		}
+		s.globalFrozen = state.GlobalFrozen
+		return nil
 	}
-	s.records = loaded
-	return nil
+
+	// Backward compatibility: try unmarshaling as legacy map[string]*PersistentReservationRecord
+	var loaded map[string]*PersistentReservationRecord
+	if errUnmarshalLegacy := json.Unmarshal(data, &loaded); errUnmarshalLegacy == nil {
+		s.records = loaded
+		s.frozenProviders = make(map[string]int64)
+		s.frozenModels = make(map[string]int64)
+		s.globalFrozen = false
+		return nil
+	}
+
+	// Corrupt file must fail closed!
+	return fmt.Errorf("corrupt budget file: invalid json in %s", s.filePath)
 }
 
 func (s *PersistentBudgetStore) saveToDiskAtomic() error {
-	data, err := json.MarshalIndent(s.records, "", "  ")
+	state := PersistentBudgetState{
+		Records:         s.records,
+		FrozenProviders: s.frozenProviders,
+		FrozenModels:    s.frozenModels,
+		GlobalFrozen:    s.globalFrozen,
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal budget store: %w", err)
 	}
 
-	tmpPath := s.filePath + ".tmp"
-	if errWrite := os.WriteFile(tmpPath, data, 0o600); errWrite != nil {
-		return fmt.Errorf("write tmp budget store: %w", errWrite)
+	tmpPath := fmt.Sprintf("%s.tmp.%d.%d", s.filePath, os.Getpid(), time.Now().UnixNano())
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("open tmp budget store: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write tmp budget store: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("sync tmp budget store: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close tmp budget store: %w", err)
 	}
 
 	if errRename := os.Rename(tmpPath, s.filePath); errRename != nil {
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("atomic rename budget store: %w", errRename)
+	}
+
+	// Fsync directory to ensure metadata persistence
+	if dir, errDir := os.Open(filepath.Dir(s.filePath)); errDir == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
 	}
 
 	return nil
@@ -142,21 +231,64 @@ func (s *PersistentBudgetStore) saveToDiskAtomic() error {
 
 // ReservationRequest defines input parameters for Reserve.
 type ReservationRequest struct {
-	ReservationKey    string
-	RequestID         string
-	Provider          string
-	Model             string
-	BillingUnit       string
-	AmountNanos       int64
-	DailyLimitNanos   int64
-	MonthlyLimitNanos int64
-	TTL               time.Duration
+	ReservationKey          string
+	RequestID               string
+	Provider                string
+	Model                   string
+	BillingUnit             string
+	AmountNanos             int64
+	DailyLimitNanos         int64
+	MonthlyLimitNanos       int64
+	GlobalDailyLimitNanos   int64
+	GlobalMonthlyLimitNanos int64
+	TTL                     time.Duration
 }
 
-// Reserve atomically reserves budget nanos, verifying daily and monthly limits.
+// IsFrozen checks if provider, model, or global is frozen due to budget overrun.
+func (s *PersistentBudgetStore) IsFrozen(_ context.Context, provider, model string) (bool, string) {
+	s.memMu.Lock()
+	defer s.memMu.Unlock()
+	if s.globalFrozen {
+		return true, "global_budget_overrun_freeze"
+	}
+	if _, frozen := s.frozenProviders[provider]; frozen {
+		return true, "provider_budget_overrun_freeze"
+	}
+	modelKey := provider + ":" + model
+	if _, frozen := s.frozenModels[modelKey]; frozen {
+		return true, "model_budget_overrun_freeze"
+	}
+	return false, ""
+}
+
+// UnfreezeProvider removes overrun freeze from a provider.
+func (s *PersistentBudgetStore) UnfreezeProvider(_ context.Context, provider string) error {
+	return s.withFileLock(func() error {
+		delete(s.frozenProviders, provider)
+		return nil
+	})
+}
+
+// UnfreezeModel removes overrun freeze from a model.
+func (s *PersistentBudgetStore) UnfreezeModel(_ context.Context, provider, model string) error {
+	return s.withFileLock(func() error {
+		delete(s.frozenModels, provider+":"+model)
+		return nil
+	})
+}
+
+// UnfreezeGlobal removes overrun freeze globally.
+func (s *PersistentBudgetStore) UnfreezeGlobal(_ context.Context) error {
+	return s.withFileLock(func() error {
+		s.globalFrozen = false
+		return nil
+	})
+}
+
+// Reserve atomically reserves budget nanos, verifying daily, monthly, and global limits.
 func (s *PersistentBudgetStore) Reserve(ctx context.Context, req ReservationRequest) (Reservation, error) {
 	if req.AmountNanos < 0 {
-		return Reservation{}, errors.New("cannot reserve negative amount")
+		return Reservation{}, ErrInvalidCost
 	}
 	if req.AmountNanos == math.MaxInt64 {
 		return Reservation{}, errors.New("int64 overflow in reservation amount")
@@ -165,6 +297,18 @@ func (s *PersistentBudgetStore) Reserve(ctx context.Context, req ReservationRequ
 	var reserved Reservation
 	err := s.withFileLock(func() error {
 		now := time.Now().UTC()
+
+		// Overrun freeze check
+		if s.globalFrozen {
+			return fmt.Errorf("%w: global is frozen due to budget overrun", ErrBudgetOverrunFrozen)
+		}
+		if _, frozen := s.frozenProviders[req.Provider]; frozen {
+			return fmt.Errorf("%w: provider %s is frozen due to budget overrun", ErrBudgetOverrunFrozen, req.Provider)
+		}
+		modelKey := req.Provider + ":" + req.Model
+		if _, frozen := s.frozenModels[modelKey]; frozen {
+			return fmt.Errorf("%w: model %s is frozen due to budget overrun", ErrBudgetOverrunFrozen, modelKey)
+		}
 
 		// 1. Idempotency check: if reservation key already exists
 		if existing, exists := s.records[req.ReservationKey]; exists && existing != nil {
@@ -192,7 +336,20 @@ func (s *PersistentBudgetStore) Reserve(ctx context.Context, req ReservationRequ
 				ErrBudgetExceeded, req.Provider, provMonthly, req.AmountNanos, req.MonthlyLimitNanos)
 		}
 
-		// 3. Create persistent reservation
+		// 3. Compute current global daily and monthly consumption
+		globalDaily := s.calculateGlobalDaily(now)
+		if req.GlobalDailyLimitNanos > 0 && globalDaily+req.AmountNanos > req.GlobalDailyLimitNanos {
+			return fmt.Errorf("%w: global daily limit exceeded (spent=%d, req=%d, limit=%d)",
+				ErrGlobalBudgetExceeded, globalDaily, req.AmountNanos, req.GlobalDailyLimitNanos)
+		}
+
+		globalMonthly := s.calculateGlobalMonthly(now)
+		if req.GlobalMonthlyLimitNanos > 0 && globalMonthly+req.AmountNanos > req.GlobalMonthlyLimitNanos {
+			return fmt.Errorf("%w: global monthly limit exceeded (spent=%d, req=%d, limit=%d)",
+				ErrGlobalBudgetExceeded, globalMonthly, req.AmountNanos, req.GlobalMonthlyLimitNanos)
+		}
+
+		// 4. Create persistent reservation
 		ttl := req.TTL
 		if ttl == 0 {
 			ttl = DefaultReservationTTL
@@ -239,10 +396,13 @@ func (s *PersistentBudgetStore) Reserve(ctx context.Context, req ReservationRequ
 	return reserved, err
 }
 
-// Settle finalizes a reservation with actual usage. If actual exceeds reservation, limits are re-checked.
+// Settle finalizes a reservation with actual usage. If actual exceeds reservation, triggers budget overrun freeze.
 func (s *PersistentBudgetStore) Settle(ctx context.Context, reservationKey string, actualAmountNanos int64, dailyLimitNanos, monthlyLimitNanos int64) error {
 	if actualAmountNanos < 0 {
-		return errors.New("cannot settle negative amount")
+		return ErrInvalidCost
+	}
+	if actualAmountNanos == math.MaxInt64 {
+		return errors.New("int64 overflow in actual amount")
 	}
 
 	return s.withFileLock(func() error {
@@ -251,32 +411,53 @@ func (s *PersistentBudgetStore) Settle(ctx context.Context, reservationKey strin
 		if !exists || rec == nil {
 			return ErrReservationNotFound
 		}
+
+		// State machine check
+		if rec.Status == ReservationStatusReleased || rec.Status == ReservationStatusExpired {
+			return fmt.Errorf("%w: cannot settle %s reservation", ErrInvalidStateTransition, rec.Status)
+		}
 		if rec.Status == ReservationStatusSettled {
-			return nil // Idempotent
+			if rec.ActualAmountNanos == actualAmountNanos {
+				return nil // Idempotent
+			}
+			return fmt.Errorf("%w: reservation already settled with amount %d, cannot resettle with %d",
+				ErrInvalidStateTransition, rec.ActualAmountNanos, actualAmountNanos)
 		}
 
 		diff := actualAmountNanos - rec.AmountNanos
-		if diff > 0 {
-			// Actual cost was greater than reserved: re-check limits
-			dailySpent := s.calculateProviderDaily(rec.Provider, now)
-			if dailyLimitNanos > 0 && dailySpent+diff > dailyLimitNanos {
-				RecordAuditEvent(CostAuditEvent{
-					Timestamp:           now,
-					Provider:            rec.Provider,
-					PublicModel:         rec.Model,
-					BillingUnit:         rec.BillingUnit,
-					ReservedAmountNanos: rec.AmountNanos,
-					ActualAmountNanos:   actualAmountNanos,
-					Decision:            DecisionWarn,
-					Reason:              "actual_cost_over_reservation_budget_exceeded",
-					RequestID:           rec.RequestID,
-				})
-			}
-		}
+		isOverrun := diff > 0
 
 		rec.ActualAmountNanos = actualAmountNanos
 		rec.Status = ReservationStatusSettled
 		rec.SettledAtMS = now.UnixMilli()
+
+		if isOverrun {
+			// Trigger critical audit and overrun freeze
+			if s.frozenProviders == nil {
+				s.frozenProviders = make(map[string]int64)
+			}
+			if s.frozenModels == nil {
+				s.frozenModels = make(map[string]int64)
+			}
+			s.frozenProviders[rec.Provider] = now.UnixMilli()
+			s.frozenModels[rec.Provider+":"+rec.Model] = now.UnixMilli()
+
+			RecordAuditEvent(CostAuditEvent{
+				Timestamp:            now,
+				Provider:             rec.Provider,
+				PublicModel:          rec.Model,
+				BillingUnit:          rec.BillingUnit,
+				ReservedAmountNanos:  rec.AmountNanos,
+				ActualAmountNanos:    actualAmountNanos,
+				EstimatedAmountNanos: rec.AmountNanos,
+				Decision:             DecisionDeny,
+				Reason:               "budget_overrun",
+				RequestID:            rec.RequestID,
+			})
+
+			return fmt.Errorf("%w: reserved %d, actual %d (diff +%d) for provider %s, model %s",
+				ErrBudgetOverrun, rec.AmountNanos, actualAmountNanos, diff, rec.Provider, rec.Model)
+		}
 
 		RecordAuditEvent(CostAuditEvent{
 			Timestamp:           now,
@@ -302,8 +483,16 @@ func (s *PersistentBudgetStore) Release(ctx context.Context, reservationKey, rea
 		if !exists || rec == nil {
 			return nil
 		}
+
+		// State machine check
+		if rec.Status == ReservationStatusSettled {
+			return fmt.Errorf("%w: cannot release settled reservation", ErrInvalidStateTransition)
+		}
 		if rec.Status == ReservationStatusReleased {
 			return nil // Idempotent
+		}
+		if rec.Status == ReservationStatusExpired {
+			return nil // Terminal
 		}
 
 		rec.Status = ReservationStatusReleased

@@ -2,6 +2,8 @@ package cost
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -52,8 +54,71 @@ type ProviderFilterRequest struct {
 	BudgetStore BudgetStore
 }
 
+// EvaluateProviderCandidate evaluates a single provider candidate against preflight price and budget rules without reserving budget.
+func EvaluateProviderCandidate(req GateRequest) GateDecision {
+	req.DryRun = true
+	return EvaluatePreflight(req)
+}
+
+// ReserveFinalProvider reserves budget for the chosen provider once candidate filtering has completed.
+// Only the single final provider selected for actual execution will have budget reserved.
+func ReserveFinalProvider(
+	ctx context.Context,
+	store BudgetStore,
+	cfg *config.Config,
+	provider, model, capability string,
+	est CostEstimate,
+	reqID string,
+) (Reservation, error) {
+	if store == nil || cfg == nil || !cfg.CostGuard.Enabled {
+		return Reservation{}, nil
+	}
+
+	provPolicy, _, effectiveProvider, _ := ResolveModelPolicy(cfg, provider, model, capability)
+	var dailyLimitNanos, monthlyLimitNanos int64
+	if provPolicy != nil {
+		if provPolicy.ProviderBudget.DailyUSD > 0 {
+			dailyLimitNanos = int64(math.Round(provPolicy.ProviderBudget.DailyUSD * float64(NanosPerUSD)))
+		}
+		if provPolicy.ProviderBudget.MonthlyUSD > 0 {
+			monthlyLimitNanos = int64(math.Round(provPolicy.ProviderBudget.MonthlyUSD * float64(NanosPerUSD)))
+		}
+	}
+
+	var globalDailyLimitNanos, globalMonthlyLimitNanos int64
+	if cfg.CostGuard.Budget.DailyUSD > 0 {
+		globalDailyLimitNanos = int64(math.Round(cfg.CostGuard.Budget.DailyUSD * float64(NanosPerUSD)))
+	}
+	if cfg.CostGuard.Budget.MonthlyUSD > 0 {
+		globalMonthlyLimitNanos = int64(math.Round(cfg.CostGuard.Budget.MonthlyUSD * float64(NanosPerUSD)))
+	}
+
+	if dailyLimitNanos <= 0 && monthlyLimitNanos <= 0 && globalDailyLimitNanos <= 0 && globalMonthlyLimitNanos <= 0 {
+		return Reservation{}, nil
+	}
+
+	resKey := reqID
+	if resKey == "" {
+		resKey = fmt.Sprintf("req-%s-%d", effectiveProvider, time.Now().UnixNano())
+	}
+
+	return store.Reserve(ctx, ReservationRequest{
+		ReservationKey:          resKey,
+		RequestID:               reqID,
+		Provider:                effectiveProvider,
+		Model:                   model,
+		BillingUnit:             est.BillingUnit,
+		AmountNanos:             est.AmountNanos,
+		DailyLimitNanos:         dailyLimitNanos,
+		MonthlyLimitNanos:       monthlyLimitNanos,
+		GlobalDailyLimitNanos:   globalDailyLimitNanos,
+		GlobalMonthlyLimitNanos: globalMonthlyLimitNanos,
+	})
+}
+
 // FilterCandidateProviders evaluates all candidate providers against the price policy,
 // budget limits, and fallback compatibility matrix, returning only safe providers.
+// Provider filtering is a pure decision function and does NOT create reservations.
 func FilterCandidateProviders(req ProviderFilterRequest) ProviderFilterResult {
 	if req.Config == nil || !req.Config.CostGuard.Enabled {
 		// When cost guard is disabled, pass all providers through unchanged.
@@ -71,7 +136,7 @@ func FilterCandidateProviders(req ProviderFilterRequest) ProviderFilterResult {
 	var primaryModelPolicy *config.ModelCostPolicy
 
 	for idx, prov := range req.Providers {
-		// 1. Evaluate this candidate provider
+		// 1. Evaluate this candidate provider (dryRun = true: NO RESERVATIONS CREATED!)
 		provPolicy, modelPolicy, resolvedProv, resolvedUpstream := ResolveModelPolicy(req.Config, prov, req.Model, req.Capability)
 		gateReq := GateRequest{
 			Config:      req.Config,
@@ -84,8 +149,9 @@ func FilterCandidateProviders(req ProviderFilterRequest) ProviderFilterResult {
 			RequestID:   req.RequestID,
 			Attempt:     req.Attempt,
 			BudgetStore: req.BudgetStore,
+			DryRun:      true,
 		}
-		gateDec := EvaluatePreflight(gateReq)
+		gateDec := EvaluateProviderCandidate(gateReq)
 
 		pDec := ProviderDecision{
 			Provider:            resolvedProv,

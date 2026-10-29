@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -146,7 +146,7 @@ func (h *OpenAIAPIHandler) executeNative(c *gin.Context, cfg *config.Config, pro
 		}
 
 		provider = filterRes.AllowedProviders[0]
-		provPolicy, primaryModelPol, _, _ := cost.ResolveModelPolicy(cfg, provider, requested, capability)
+		_, primaryModelPol, _, _ := cost.ResolveModelPolicy(cfg, provider, requested, capability)
 		guard := cost.NewFallbackGuard(
 			cfg,
 			provider,
@@ -161,34 +161,38 @@ func (h *OpenAIAPIHandler) executeNative(c *gin.Context, cfg *config.Config, pro
 		execCtx = cost.WithFallbackGuard(execCtx, guard)
 
 		if bStore != nil && filterRes.PrimaryDecision.EstimatedCost.AmountNanos > 0 {
-			reservationKey = fmt.Sprintf("native-%s-%d", requested, time.Now().UnixNano())
-			var dailyLimit, monthlyLimit int64
-			if provPolicy != nil {
-				dailyLimit = int64(math.Round(provPolicy.ProviderBudget.DailyUSD * float64(cost.NanosPerUSD)))
-				monthlyLimit = int64(math.Round(provPolicy.ProviderBudget.MonthlyUSD * float64(cost.NanosPerUSD)))
-			}
-			_, errReserve := bStore.Reserve(execCtx, cost.ReservationRequest{
-				ReservationKey:    reservationKey,
-				Provider:          provider,
-				Model:             requested,
-				BillingUnit:       filterRes.PrimaryDecision.BillingUnit,
-				AmountNanos:       filterRes.PrimaryDecision.EstimatedCost.AmountNanos,
-				DailyLimitNanos:   dailyLimit,
-				MonthlyLimitNanos: monthlyLimit,
-			})
+			res, errReserve := cost.ReserveFinalProvider(
+				execCtx,
+				bStore,
+				cfg,
+				provider,
+				requested,
+				capability,
+				filterRes.PrimaryDecision.EstimatedCost,
+				c.GetString("request_id"),
+			)
 			if errReserve != nil {
+				reason := cost.ReasonProviderBudgetExceeded
+				if errors.Is(errReserve, cost.ErrGlobalBudgetExceeded) {
+					reason = cost.ReasonGlobalBudgetExceeded
+				} else if errors.Is(errReserve, cost.ErrBudgetOverrunFrozen) {
+					reason = cost.ReasonBudgetOverrunFreeze
+				}
 				errBody, status := cost.BuildGateErrorResponse(cost.GateDecision{
-					Allowed:     false,
-					Decision:    cost.DecisionDeny,
-					Code:        cost.CodePricePolicyViolation,
-					Reason:      cost.ReasonProviderBudgetExceeded,
-					Provider:    provider,
-					Model:       requested,
-					BillingUnit: filterRes.PrimaryDecision.BillingUnit,
+					Allowed:             false,
+					Decision:            cost.DecisionDeny,
+					Code:                cost.CodePricePolicyViolation,
+					Reason:              reason,
+					Provider:            provider,
+					Model:               requested,
+					BillingUnit:         filterRes.PrimaryDecision.BillingUnit,
+					EstimatedCost:       filterRes.PrimaryDecision.EstimatedCost,
+					MaxRequestCostNanos: filterRes.PrimaryDecision.MaxRequestCostNanos,
 				})
 				c.Data(status, "application/json", errBody)
 				return
 			}
+			reservationKey = res.ID
 		}
 	}
 
@@ -442,7 +446,7 @@ func (h *OpenAIAPIHandler) VideoSubmit(c *gin.Context) {
 		}
 
 		provider = filterRes.AllowedProviders[0]
-		provPolicy, primaryModelPol, _, _ := cost.ResolveModelPolicy(cfg, provider, model, "video")
+		_, primaryModelPol, _, _ := cost.ResolveModelPolicy(cfg, provider, model, "video")
 		guard := cost.NewFallbackGuard(
 			cfg,
 			provider,
@@ -457,34 +461,38 @@ func (h *OpenAIAPIHandler) VideoSubmit(c *gin.Context) {
 		execCtx = cost.WithFallbackGuard(execCtx, guard)
 
 		if bStore != nil && filterRes.PrimaryDecision.EstimatedCost.AmountNanos > 0 {
-			reservationKey = fmt.Sprintf("native-video-%s-%d", model, time.Now().UnixNano())
-			var dailyLimit, monthlyLimit int64
-			if provPolicy != nil {
-				dailyLimit = int64(math.Round(provPolicy.ProviderBudget.DailyUSD * float64(cost.NanosPerUSD)))
-				monthlyLimit = int64(math.Round(provPolicy.ProviderBudget.MonthlyUSD * float64(cost.NanosPerUSD)))
-			}
-			_, errReserve := bStore.Reserve(execCtx, cost.ReservationRequest{
-				ReservationKey:    reservationKey,
-				Provider:          provider,
-				Model:             model,
-				BillingUnit:       filterRes.PrimaryDecision.BillingUnit,
-				AmountNanos:       filterRes.PrimaryDecision.EstimatedCost.AmountNanos,
-				DailyLimitNanos:   dailyLimit,
-				MonthlyLimitNanos: monthlyLimit,
-			})
+			res, errReserve := cost.ReserveFinalProvider(
+				execCtx,
+				bStore,
+				cfg,
+				provider,
+				model,
+				"video",
+				filterRes.PrimaryDecision.EstimatedCost,
+				c.GetString("request_id"),
+			)
 			if errReserve != nil {
+				reason := cost.ReasonProviderBudgetExceeded
+				if errors.Is(errReserve, cost.ErrGlobalBudgetExceeded) {
+					reason = cost.ReasonGlobalBudgetExceeded
+				} else if errors.Is(errReserve, cost.ErrBudgetOverrunFrozen) {
+					reason = cost.ReasonBudgetOverrunFreeze
+				}
 				errBody, status := cost.BuildGateErrorResponse(cost.GateDecision{
-					Allowed:     false,
-					Decision:    cost.DecisionDeny,
-					Code:        cost.CodePricePolicyViolation,
-					Reason:      cost.ReasonProviderBudgetExceeded,
-					Provider:    provider,
-					Model:       model,
-					BillingUnit: filterRes.PrimaryDecision.BillingUnit,
+					Allowed:             false,
+					Decision:            cost.DecisionDeny,
+					Code:                cost.CodePricePolicyViolation,
+					Reason:              reason,
+					Provider:            provider,
+					Model:               model,
+					BillingUnit:         filterRes.PrimaryDecision.BillingUnit,
+					EstimatedCost:       filterRes.PrimaryDecision.EstimatedCost,
+					MaxRequestCostNanos: filterRes.PrimaryDecision.MaxRequestCostNanos,
 				})
 				c.Data(status, "application/json", errBody)
 				return
 			}
+			reservationKey = res.ID
 		}
 	}
 

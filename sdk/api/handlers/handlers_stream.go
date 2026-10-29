@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strings"
 
@@ -400,7 +399,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 
 		providers = filterRes.AllowedProviders
 
-		provPolicy, primaryModelPol, _, _ := cost.ResolveModelPolicy(cfg, filterRes.AllowedProviders[0], originalRequestedModel, entryProtocol)
+		_, primaryModelPol, _, _ := cost.ResolveModelPolicy(cfg, filterRes.AllowedProviders[0], originalRequestedModel, entryProtocol)
 		guard := cost.NewFallbackGuard(
 			cfg,
 			filterRes.AllowedProviders[0],
@@ -415,42 +414,45 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		ctx = cost.WithFallbackGuard(ctx, guard)
 
 		if bStore != nil && filterRes.PrimaryDecision.EstimatedCost.AmountNanos > 0 {
-			reservationKey = fmt.Sprintf("%s-att-%d", lifecycle.requestID(), 0)
-			var dailyLimit, monthlyLimit int64
-			if provPolicy != nil {
-				dailyLimit = int64(math.Round(provPolicy.ProviderBudget.DailyUSD * float64(cost.NanosPerUSD)))
-				monthlyLimit = int64(math.Round(provPolicy.ProviderBudget.MonthlyUSD * float64(cost.NanosPerUSD)))
-			}
-			_, errReserve := bStore.Reserve(ctx, cost.ReservationRequest{
-				ReservationKey:    reservationKey,
-				RequestID:         lifecycle.requestID(),
-				Provider:          filterRes.AllowedProviders[0],
-				Model:             originalRequestedModel,
-				BillingUnit:       filterRes.PrimaryDecision.BillingUnit,
-				AmountNanos:       filterRes.PrimaryDecision.EstimatedCost.AmountNanos,
-				DailyLimitNanos:   dailyLimit,
-				MonthlyLimitNanos: monthlyLimit,
-			})
+			res, errReserve := cost.ReserveFinalProvider(
+				ctx,
+				bStore,
+				cfg,
+				filterRes.AllowedProviders[0],
+				originalRequestedModel,
+				entryProtocol,
+				filterRes.PrimaryDecision.EstimatedCost,
+				lifecycle.requestID(),
+			)
 			if errReserve != nil {
+				reason := cost.ReasonProviderBudgetExceeded
+				if errors.Is(errReserve, cost.ErrGlobalBudgetExceeded) {
+					reason = cost.ReasonGlobalBudgetExceeded
+				} else if errors.Is(errReserve, cost.ErrBudgetOverrunFrozen) {
+					reason = cost.ReasonBudgetOverrunFreeze
+				}
 				errBody, status := cost.BuildGateErrorResponse(cost.GateDecision{
-					Allowed:     false,
-					Decision:    cost.DecisionDeny,
-					Code:        cost.CodePricePolicyViolation,
-					Reason:      cost.ReasonProviderBudgetExceeded,
-					Provider:    filterRes.AllowedProviders[0],
-					Model:       originalRequestedModel,
-					BillingUnit: filterRes.PrimaryDecision.BillingUnit,
+					Allowed:             false,
+					Decision:            cost.DecisionDeny,
+					Code:                cost.CodePricePolicyViolation,
+					Reason:              reason,
+					Provider:            filterRes.AllowedProviders[0],
+					Model:               originalRequestedModel,
+					BillingUnit:         filterRes.PrimaryDecision.BillingUnit,
+					EstimatedCost:       filterRes.PrimaryDecision.EstimatedCost,
+					MaxRequestCostNanos: filterRes.PrimaryDecision.MaxRequestCostNanos,
 				})
 				errChan := make(chan *interfaces.ErrorMessage, 1)
 				errChan <- &interfaces.ErrorMessage{
 					StatusCode:     status,
 					DirectResponse: true,
 					Body:           errBody,
-					Error:          fmt.Errorf("price_policy_violation: provider_budget_exceeded"),
+					Error:          fmt.Errorf("price_policy_violation: %s", reason),
 				}
 				close(errChan)
 				return nil, nil, errChan
 			}
+			reservationKey = res.ID
 		}
 	}
 

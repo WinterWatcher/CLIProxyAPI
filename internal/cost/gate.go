@@ -3,6 +3,7 @@ package cost
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -34,6 +35,7 @@ const (
 	ReasonMaxRequestCostExceeded = "max_request_cost_exceeded"
 	ReasonProviderBudgetExceeded = "provider_budget_exceeded"
 	ReasonGlobalBudgetExceeded   = "global_budget_exceeded"
+	ReasonBudgetOverrunFreeze    = "budget_overrun_freeze"
 	ReasonUnsupportedUnit        = "unsupported_billing_unit"
 	ReasonAllowed                = "allowed"
 	ReasonExplicitFree           = "explicit_free"
@@ -80,6 +82,7 @@ type GateRequest struct {
 	RequestID   string
 	Attempt     int
 	BudgetStore BudgetStore
+	DryRun      bool
 }
 
 // ResolveModelPolicy resolves the provider policy and model policy matching the request.
@@ -398,50 +401,85 @@ func EvaluatePreflight(req GateRequest) GateDecision {
 		return dec
 	}
 
-	// Rule 8: Provider Budget reservation (when BudgetStore is configured)
-	if req.BudgetStore != nil && provPolicy != nil && (provPolicy.ProviderBudget.DailyUSD > 0 || provPolicy.ProviderBudget.MonthlyUSD > 0) {
-		dailyLimitNanos := int64(math.Round(provPolicy.ProviderBudget.DailyUSD * float64(NanosPerUSD)))
-		monthlyLimitNanos := int64(math.Round(provPolicy.ProviderBudget.MonthlyUSD * float64(NanosPerUSD)))
-		resKey := req.RequestID
-		if resKey == "" {
-			resKey = fmt.Sprintf("req-%s-%d", effectiveProvider, time.Now().UnixNano())
+	// Rule 8: Budget check & reservation (when BudgetStore is configured)
+	if req.BudgetStore != nil {
+		if frozen, freezeReason := req.BudgetStore.IsFrozen(context.Background(), effectiveProvider, req.Model); frozen {
+			return budgetDenyDecision(effectiveProvider, req.Model, resolvedUpstream, est, maxRequestCostNanos, ReasonBudgetOverrunFreeze, freezeReason, req.RequestID, req.Attempt)
 		}
-		_, errReserve := req.BudgetStore.Reserve(context.Background(), ReservationRequest{
-			ReservationKey:    resKey,
-			RequestID:         req.RequestID,
-			Provider:          effectiveProvider,
-			Model:             req.Model,
-			BillingUnit:       est.BillingUnit,
-			AmountNanos:       est.AmountNanos,
-			DailyLimitNanos:   dailyLimitNanos,
-			MonthlyLimitNanos: monthlyLimitNanos,
-		})
-		if errReserve != nil {
-			dec := GateDecision{
-				Allowed:             false,
-				Decision:            DecisionDeny,
-				Code:                CodePricePolicyViolation,
-				Reason:              ReasonProviderBudgetExceeded,
-				Provider:            effectiveProvider,
-				Model:               req.Model,
-				PriceStatus:         est.PriceStatus,
-				BillingUnit:         est.BillingUnit,
-				EstimatedCost:       est,
-				MaxRequestCostNanos: maxRequestCostNanos,
-				Audit: CostPolicyAudit{
-					PolicyEnabled: true,
-					PriceStatus:   est.PriceStatus,
-					Provider:      effectiveProvider,
-					Model:         req.Model,
-					BillingUnit:   est.BillingUnit,
-					AmountKnown:   est.AmountKnown,
-					QuantityKnown: est.QuantityKnown,
-					Decision:      DecisionDeny,
-					Reason:        ReasonProviderBudgetExceeded,
-				},
+
+		var dailyLimitNanos, monthlyLimitNanos int64
+		if provPolicy != nil {
+			if provPolicy.ProviderBudget.DailyUSD > 0 {
+				dailyLimitNanos = int64(math.Round(provPolicy.ProviderBudget.DailyUSD * float64(NanosPerUSD)))
 			}
-			recordGateAudit(dec, resolvedUpstream, req.RequestID, req.Attempt)
-			return dec
+			if provPolicy.ProviderBudget.MonthlyUSD > 0 {
+				monthlyLimitNanos = int64(math.Round(provPolicy.ProviderBudget.MonthlyUSD * float64(NanosPerUSD)))
+			}
+		}
+
+		var globalDailyLimitNanos, globalMonthlyLimitNanos int64
+		if req.Config != nil {
+			if req.Config.CostGuard.Budget.DailyUSD > 0 {
+				globalDailyLimitNanos = int64(math.Round(req.Config.CostGuard.Budget.DailyUSD * float64(NanosPerUSD)))
+			}
+			if req.Config.CostGuard.Budget.MonthlyUSD > 0 {
+				globalMonthlyLimitNanos = int64(math.Round(req.Config.CostGuard.Budget.MonthlyUSD * float64(NanosPerUSD)))
+			}
+		}
+
+		if req.DryRun {
+			// Dry-run mode for candidate filtering: PURE EVALUATION, NO RESERVATION SIDE EFFECTS
+			ctx := context.Background()
+			if dailyLimitNanos > 0 {
+				provDaily, _ := req.BudgetStore.CurrentProviderDaily(ctx, effectiveProvider)
+				if provDaily+est.AmountNanos > dailyLimitNanos {
+					return budgetDenyDecision(effectiveProvider, req.Model, resolvedUpstream, est, maxRequestCostNanos, ReasonProviderBudgetExceeded, ReasonProviderBudgetExceeded, req.RequestID, req.Attempt)
+				}
+			}
+			if monthlyLimitNanos > 0 {
+				provMonthly, _ := req.BudgetStore.CurrentProviderMonthly(ctx, effectiveProvider)
+				if provMonthly+est.AmountNanos > monthlyLimitNanos {
+					return budgetDenyDecision(effectiveProvider, req.Model, resolvedUpstream, est, maxRequestCostNanos, ReasonProviderBudgetExceeded, ReasonProviderBudgetExceeded, req.RequestID, req.Attempt)
+				}
+			}
+			if globalDailyLimitNanos > 0 {
+				globalDaily, _ := req.BudgetStore.CurrentGlobalDaily(ctx)
+				if globalDaily+est.AmountNanos > globalDailyLimitNanos {
+					return budgetDenyDecision(effectiveProvider, req.Model, resolvedUpstream, est, maxRequestCostNanos, ReasonGlobalBudgetExceeded, ReasonGlobalBudgetExceeded, req.RequestID, req.Attempt)
+				}
+			}
+			if globalMonthlyLimitNanos > 0 {
+				globalMonthly, _ := req.BudgetStore.CurrentGlobalMonthly(ctx)
+				if globalMonthly+est.AmountNanos > globalMonthlyLimitNanos {
+					return budgetDenyDecision(effectiveProvider, req.Model, resolvedUpstream, est, maxRequestCostNanos, ReasonGlobalBudgetExceeded, ReasonGlobalBudgetExceeded, req.RequestID, req.Attempt)
+				}
+			}
+		} else if dailyLimitNanos > 0 || monthlyLimitNanos > 0 || globalDailyLimitNanos > 0 || globalMonthlyLimitNanos > 0 {
+			resKey := req.RequestID
+			if resKey == "" {
+				resKey = fmt.Sprintf("req-%s-%d", effectiveProvider, time.Now().UnixNano())
+			}
+			_, errReserve := req.BudgetStore.Reserve(context.Background(), ReservationRequest{
+				ReservationKey:          resKey,
+				RequestID:               req.RequestID,
+				Provider:                effectiveProvider,
+				Model:                   req.Model,
+				BillingUnit:             est.BillingUnit,
+				AmountNanos:             est.AmountNanos,
+				DailyLimitNanos:         dailyLimitNanos,
+				MonthlyLimitNanos:       monthlyLimitNanos,
+				GlobalDailyLimitNanos:   globalDailyLimitNanos,
+				GlobalMonthlyLimitNanos: globalMonthlyLimitNanos,
+			})
+			if errReserve != nil {
+				reason := ReasonProviderBudgetExceeded
+				if errors.Is(errReserve, ErrGlobalBudgetExceeded) {
+					reason = ReasonGlobalBudgetExceeded
+				} else if errors.Is(errReserve, ErrBudgetOverrunFrozen) {
+					reason = ReasonBudgetOverrunFreeze
+				}
+				return budgetDenyDecision(effectiveProvider, req.Model, resolvedUpstream, est, maxRequestCostNanos, reason, reason, req.RequestID, req.Attempt)
+			}
 		}
 	}
 
@@ -515,6 +553,34 @@ func BuildGateErrorResponse(decision GateDecision) ([]byte, int) {
 	}
 	bytes, _ := json.Marshal(resp)
 	return bytes, http.StatusPaymentRequired
+}
+
+func budgetDenyDecision(provider, model, resolvedUpstream string, est CostEstimate, maxRequestCostNanos int64, reason, auditReason, requestID string, attempt int) GateDecision {
+	dec := GateDecision{
+		Allowed:             false,
+		Decision:            DecisionDeny,
+		Code:                CodePricePolicyViolation,
+		Reason:              reason,
+		Provider:            provider,
+		Model:               model,
+		PriceStatus:         est.PriceStatus,
+		BillingUnit:         est.BillingUnit,
+		EstimatedCost:       est,
+		MaxRequestCostNanos: maxRequestCostNanos,
+		Audit: CostPolicyAudit{
+			PolicyEnabled: true,
+			PriceStatus:   est.PriceStatus,
+			Provider:      provider,
+			Model:         model,
+			BillingUnit:   est.BillingUnit,
+			AmountKnown:   est.AmountKnown,
+			QuantityKnown: est.QuantityKnown,
+			Decision:      DecisionDeny,
+			Reason:        auditReason,
+		},
+	}
+	recordGateAudit(dec, resolvedUpstream, requestID, attempt)
+	return dec
 }
 
 // ExtractNativeMeasurement extracts capability-specific measurements from incoming request bodies.

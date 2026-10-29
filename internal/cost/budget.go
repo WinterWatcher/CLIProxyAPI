@@ -11,8 +11,18 @@ import (
 var (
 	// ErrBudgetExceeded indicates the request would exceed the reserved budget.
 	ErrBudgetExceeded = errors.New("budget exceeded")
+	// ErrGlobalBudgetExceeded indicates the request would exceed the global budget limit.
+	ErrGlobalBudgetExceeded = errors.New("global budget exceeded")
+	// ErrBudgetOverrun indicates actual cost exceeded the reserved amount.
+	ErrBudgetOverrun = errors.New("budget overrun: actual cost exceeded reservation")
+	// ErrBudgetOverrunFrozen indicates requests are blocked due to budget overrun freeze.
+	ErrBudgetOverrunFrozen = errors.New("budget_overrun_freeze: provider/model is frozen due to budget overrun")
 	// ErrReservationNotFound indicates the reservation ID was not found.
 	ErrReservationNotFound = errors.New("reservation not found")
+	// ErrInvalidStateTransition indicates an illegal status migration in the reservation state machine.
+	ErrInvalidStateTransition = errors.New("invalid reservation state transition")
+	// ErrInvalidCost indicates a negative or invalid cost amount.
+	ErrInvalidCost = errors.New("invalid cost amount")
 )
 
 // Reservation represents a reserved amount of nanodollars against a budget.
@@ -23,10 +33,7 @@ type Reservation struct {
 	ReservedAt  time.Time `json:"reserved_at"`
 }
 
-// BudgetStore defines the contract for budget tracking and atomic reservation.
-// NOTE: Single-process in-memory implementation is provided for test/local use.
-// Distributed persistent storage (e.g. Redis / CPA Manager Plus sync) is designated
-// for subsequent tasks (Task 7).
+// BudgetStore defines the contract for budget tracking, atomic reservation, and freeze state.
 type BudgetStore interface {
 	CurrentProviderDaily(ctx context.Context, provider string) (int64, error)
 	CurrentProviderMonthly(ctx context.Context, provider string) (int64, error)
@@ -35,25 +42,34 @@ type BudgetStore interface {
 	Reserve(ctx context.Context, req ReservationRequest) (Reservation, error)
 	Release(ctx context.Context, reservationKey, reason string) error
 	Settle(ctx context.Context, reservationKey string, actualAmountNanos int64, dailyLimitNanos, monthlyLimitNanos int64) error
+	IsFrozen(ctx context.Context, provider, model string) (bool, string)
+	UnfreezeProvider(ctx context.Context, provider string) error
+	UnfreezeModel(ctx context.Context, provider, model string) error
+	UnfreezeGlobal(ctx context.Context) error
 }
 
 // MemoryBudgetStore provides a thread-safe, in-memory implementation of BudgetStore.
 type MemoryBudgetStore struct {
-	mu             sync.Mutex
-	providerDaily  map[string]int64
-	providerMonth  map[string]int64
-	globalDaily    int64
-	globalMonth    int64
-	reservations   map[string]Reservation
-	reservationSeq int64
+	mu              sync.Mutex
+	providerDaily   map[string]int64
+	providerMonth   map[string]int64
+	globalDaily     int64
+	globalMonth     int64
+	reservations    map[string]Reservation
+	reservationSeq  int64
+	frozenProviders map[string]bool
+	frozenModels    map[string]bool
+	globalFrozen    bool
 }
 
 // NewMemoryBudgetStore creates a new in-memory budget store.
 func NewMemoryBudgetStore() *MemoryBudgetStore {
 	return &MemoryBudgetStore{
-		providerDaily: make(map[string]int64),
-		providerMonth: make(map[string]int64),
-		reservations:  make(map[string]Reservation),
+		providerDaily:   make(map[string]int64),
+		providerMonth:   make(map[string]int64),
+		reservations:    make(map[string]Reservation),
+		frozenProviders: make(map[string]bool),
+		frozenModels:    make(map[string]bool),
 	}
 }
 
@@ -85,13 +101,65 @@ func (s *MemoryBudgetStore) CurrentGlobalMonthly(_ context.Context) (int64, erro
 	return s.globalMonth, nil
 }
 
+// IsFrozen checks if provider, model, or global is frozen.
+func (s *MemoryBudgetStore) IsFrozen(_ context.Context, provider, model string) (bool, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.globalFrozen {
+		return true, "global_budget_overrun_freeze"
+	}
+	if s.frozenProviders[provider] {
+		return true, "provider_budget_overrun_freeze"
+	}
+	modelKey := provider + ":" + model
+	if s.frozenModels[modelKey] {
+		return true, "model_budget_overrun_freeze"
+	}
+	return false, ""
+}
+
+// UnfreezeProvider unfreezes a provider.
+func (s *MemoryBudgetStore) UnfreezeProvider(_ context.Context, provider string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.frozenProviders, provider)
+	return nil
+}
+
+// UnfreezeModel unfreezes a model.
+func (s *MemoryBudgetStore) UnfreezeModel(_ context.Context, provider, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.frozenModels, provider+":"+model)
+	return nil
+}
+
+// UnfreezeGlobal unfreezes global status.
+func (s *MemoryBudgetStore) UnfreezeGlobal(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.globalFrozen = false
+	return nil
+}
+
 // Reserve atomically checks budget limits and holds the requested amount to prevent over-allocation.
 func (s *MemoryBudgetStore) Reserve(_ context.Context, req ReservationRequest) (Reservation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if req.AmountNanos < 0 {
-		return Reservation{}, errors.New("cannot reserve negative amount")
+		return Reservation{}, ErrInvalidCost
+	}
+
+	if s.globalFrozen {
+		return Reservation{}, fmt.Errorf("%w: global is frozen", ErrBudgetOverrunFrozen)
+	}
+	if s.frozenProviders[req.Provider] {
+		return Reservation{}, fmt.Errorf("%w: provider %s is frozen", ErrBudgetOverrunFrozen, req.Provider)
+	}
+	modelKey := req.Provider + ":" + req.Model
+	if s.frozenModels[modelKey] {
+		return Reservation{}, fmt.Errorf("%w: model %s is frozen", ErrBudgetOverrunFrozen, modelKey)
 	}
 
 	if existing, exists := s.reservations[req.ReservationKey]; exists {
@@ -106,6 +174,14 @@ func (s *MemoryBudgetStore) Reserve(_ context.Context, req ReservationRequest) (
 	currentMonth := s.providerMonth[req.Provider]
 	if req.MonthlyLimitNanos > 0 && currentMonth+req.AmountNanos > req.MonthlyLimitNanos {
 		return Reservation{}, fmt.Errorf("%w: provider monthly limit exceeded (current=%d, req=%d, limit=%d)", ErrBudgetExceeded, currentMonth, req.AmountNanos, req.MonthlyLimitNanos)
+	}
+
+	if req.GlobalDailyLimitNanos > 0 && s.globalDaily+req.AmountNanos > req.GlobalDailyLimitNanos {
+		return Reservation{}, fmt.Errorf("%w: global daily limit exceeded (current=%d, req=%d, limit=%d)", ErrGlobalBudgetExceeded, s.globalDaily, req.AmountNanos, req.GlobalDailyLimitNanos)
+	}
+
+	if req.GlobalMonthlyLimitNanos > 0 && s.globalMonth+req.AmountNanos > req.GlobalMonthlyLimitNanos {
+		return Reservation{}, fmt.Errorf("%w: global monthly limit exceeded (current=%d, req=%d, limit=%d)", ErrGlobalBudgetExceeded, s.globalMonth, req.AmountNanos, req.GlobalMonthlyLimitNanos)
 	}
 
 	s.providerDaily[req.Provider] += req.AmountNanos
@@ -162,19 +238,31 @@ func (s *MemoryBudgetStore) Release(_ context.Context, reservationKey, reason st
 	return nil
 }
 
-// Settle finalizes a reservation in memory.
+// Settle finalizes a reservation in memory. If actual > reserved, records overrun and freezes provider/model.
 func (s *MemoryBudgetStore) Settle(_ context.Context, reservationKey string, actualAmountNanos int64, dailyLimitNanos, monthlyLimitNanos int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if actualAmountNanos < 0 {
+		return ErrInvalidCost
+	}
+
 	res, exists := s.reservations[reservationKey]
 	if !exists {
-		return nil
+		return ErrReservationNotFound
 	}
 	diff := actualAmountNanos - res.AmountNanos
 	s.providerDaily[res.Provider] += diff
 	s.providerMonth[res.Provider] += diff
 	s.globalDaily += diff
 	s.globalMonth += diff
+
+	if diff > 0 {
+		s.frozenProviders[res.Provider] = true
+		s.frozenModels[res.Provider+":default"] = true
+		return fmt.Errorf("%w: reserved %d, actual %d (diff +%d) for provider %s",
+			ErrBudgetOverrun, res.AmountNanos, actualAmountNanos, diff, res.Provider)
+	}
+
 	return nil
 }

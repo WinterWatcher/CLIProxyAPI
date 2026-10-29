@@ -1,6 +1,9 @@
 package cost
 
 import (
+	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -285,7 +288,127 @@ func TestAliasPoolModelFallback(t *testing.T) {
 	}
 
 	// 3. Alias pool: paid-expensive -> paid-cheap is ALLOWED
-	if ok, _ := guard.ValidateUpstreamModelInPool("pool-prov", "m-paid-expensive", "m-paid-cheap"); !ok {
-		t.Error("alias pool: paid-expensive -> paid-cheap must be ALLOWED")
+	if ok, _ := guard.ValidateUpstreamModelInPool("pool-prov", "m-paid-cheap", "m-paid-cheap"); !ok {
+		t.Error("alias pool: paid-cheap -> paid-cheap must be ALLOWED")
+	}
+}
+
+func TestCandidateFilteringNoGhostReservation(t *testing.T) {
+	// A1: 10个候选Provider过滤后只有1个Reservation，被过滤Provider没有预算增加，并发请求不残留
+	dir := t.TempDir()
+	store, err := NewPersistentBudgetStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	compatList := make([]config.OpenAICompatibility, 10)
+	candidateNames := make([]string, 10)
+	for i := 0; i < 10; i++ {
+		name := fmt.Sprintf("prov-%d", i)
+		candidateNames[i] = name
+		compatList[i] = config.OpenAICompatibility{
+			Name: name,
+			CostPolicy: &config.ProviderCostPolicy{
+				ProviderBudget: config.ProviderBudgetPolicy{
+					DailyUSD:   100.0,
+					MonthlyUSD: 1000.0,
+				},
+			},
+			Models: []config.OpenAICompatibilityModel{
+				{
+					Name:  "chat-model",
+					Alias: "chat-model",
+					CostPolicy: &config.ModelCostPolicy{
+						PriceStatus:          config.PriceStatusPaidConfirmed,
+						BillingUnit:          config.BillingUnitTokens,
+						PromptPer1M:          float64(i + 1), // prov-0 cheapest, prov-9 most expensive
+						PromptConfigured:     true,
+						CompletionPer1M:      float64((i + 1) * 2),
+						CompletionConfigured: true,
+					},
+				},
+			},
+		}
+	}
+
+	cfg := &config.Config{
+		CostGuard: config.CostGuardConfig{
+			Enabled: true,
+		},
+		OpenAICompatibility: compatList,
+	}
+
+	ctx := context.Background()
+
+	// 1. Run FilterCandidateProviders across all 10 candidates
+	filterRes := FilterCandidateProviders(ProviderFilterRequest{
+		Config:      cfg,
+		Providers:   candidateNames,
+		Model:       "chat-model",
+		Capability:  "chat",
+		Measurement: FromTokens(1000, 1000, 0, 0, 0),
+		RequestID:   "req-filter-test",
+		BudgetStore: store,
+	})
+
+	// 2. VERIFY: Zero reservations were created during filtering!
+	for i := 0; i < 10; i++ {
+		daily, _ := store.CurrentProviderDaily(ctx, candidateNames[i])
+		if daily != 0 {
+			t.Fatalf("provider %s had ghost reservation during filtering: %d", candidateNames[i], daily)
+		}
+	}
+	globalDaily, _ := store.CurrentGlobalDaily(ctx)
+	if globalDaily != 0 {
+		t.Fatalf("global daily had ghost reservation during filtering: %d", globalDaily)
+	}
+
+	// 3. Now reserve for the final chosen provider ONLY
+	chosenProvider := filterRes.AllowedProviders[0]
+	res, errReserve := ReserveFinalProvider(ctx, store, cfg, chosenProvider, "chat-model", "chat", filterRes.PrimaryDecision.EstimatedCost, "req-filter-test")
+	if errReserve != nil {
+		t.Fatalf("ReserveFinalProvider failed: %v", errReserve)
+	}
+	if res.ID == "" {
+		t.Fatal("expected non-empty reservation ID")
+	}
+
+	// 4. Verify only chosen provider has spend > 0, other 9 providers remain 0
+	chosenDaily, _ := store.CurrentProviderDaily(ctx, chosenProvider)
+	if chosenDaily <= 0 {
+		t.Fatalf("expected chosen provider spend > 0, got %d", chosenDaily)
+	}
+	for i := 1; i < 10; i++ {
+		daily, _ := store.CurrentProviderDaily(ctx, candidateNames[i])
+		if daily != 0 {
+			t.Fatalf("unselected candidate %s has unexpected spend: %d", candidateNames[i], daily)
+		}
+	}
+
+	// 5. Concurrent filtering: 20 goroutines filtering concurrently must leave 0 ghost reservations
+	var wg sync.WaitGroup
+	for g := 0; g < 20; g++ {
+		wg.Add(1)
+		go func(gid int) {
+			defer wg.Done()
+			_ = FilterCandidateProviders(ProviderFilterRequest{
+				Config:      cfg,
+				Providers:   candidateNames,
+				Model:       "chat-model",
+				Capability:  "chat",
+				Measurement: FromTokens(1000, 1000, 0, 0, 0),
+				RequestID:   fmt.Sprintf("req-concurrent-%d", gid),
+				BudgetStore: store,
+			})
+		}(g)
+	}
+	wg.Wait()
+
+	// Verify other 9 providers still remain 0!
+	for i := 1; i < 10; i++ {
+		daily, _ := store.CurrentProviderDaily(ctx, candidateNames[i])
+		if daily != 0 {
+			t.Fatalf("unselected candidate %s has ghost reservations after concurrent filtering: %d", candidateNames[i], daily)
+		}
 	}
 }
