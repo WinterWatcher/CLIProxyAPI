@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
@@ -61,6 +62,29 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 		return nil, nil, errMsg
 	}
 	providers = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
+
+	if cfg := h.GetFullConfig(); cfg != nil && cfg.CostGuard.Enabled {
+		targetProvider := ""
+		if len(providers) > 0 {
+			targetProvider = providers[0]
+		}
+		gateDec := cost.EvaluatePreflight(cost.GateRequest{
+			Config:     cfg,
+			Provider:   targetProvider,
+			Model:      originalRequestedModel,
+			Capability: entryProtocol,
+			RawPayload: rawJSON,
+		})
+		if !gateDec.Allowed {
+			errBody, status := cost.BuildGateErrorResponse(gateDec)
+			return nil, nil, &interfaces.ErrorMessage{
+				StatusCode:     status,
+				DirectResponse: true,
+				Body:           errBody,
+				Error:          fmt.Errorf("price_policy_violation: %s", gateDec.Reason),
+			}
+		}
+	}
 	reqMeta := requestExecutionMetadata(ctx)
 	if execOptions.Path != "" {
 		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.Path

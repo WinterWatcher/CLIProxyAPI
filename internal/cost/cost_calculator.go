@@ -273,6 +273,71 @@ func EstimateCost(req CostRequest) CostEstimate {
 		return est
 	}
 
+	// Handle explicitly confirmed free model
+	if policy.PriceStatus == config.PriceStatusFreeConfirmed {
+		est.Amount = 0
+		est.AmountNanos = 0
+		est.AmountKnown = true
+		est.ExplicitlyFree = true
+		est.Known = true
+		est.Status = StatusExplicitFree
+		est.Reason = ReasonExplicitZeroPrice
+		if req.Measurement.TokensPresent && req.Measurement.Tokens != nil {
+			if req.Measurement.Tokens.PromptTokens < 0 || req.Measurement.Tokens.CompletionTokens < 0 ||
+				req.Measurement.Tokens.CacheTokens < 0 || req.Measurement.Tokens.CacheReadTokens < 0 ||
+				req.Measurement.Tokens.CacheCreationTokens < 0 {
+				est.Status = StatusInvalidMeasurement
+				est.Reason = ReasonNegativeTokenCount
+				est.AmountKnown = false
+				est.Known = false
+				return est
+			}
+			est.Quantity = float64(req.Measurement.Tokens.Total())
+			est.QuantityKnown = true
+		} else if req.Measurement.CharactersPresent {
+			if req.Measurement.Characters < 0 {
+				est.Status = StatusInvalidMeasurement
+				est.Reason = ReasonNegativeQuantity
+				est.AmountKnown = false
+				est.Known = false
+				return est
+			}
+			est.Quantity = float64(req.Measurement.Characters)
+			est.QuantityKnown = true
+		} else if req.Measurement.AudioSecondsPresent {
+			if req.Measurement.AudioSeconds < 0 {
+				est.Status = StatusInvalidMeasurement
+				est.Reason = ReasonNegativeQuantity
+				est.AmountKnown = false
+				est.Known = false
+				return est
+			}
+			est.Quantity = req.Measurement.AudioSeconds
+			est.QuantityKnown = true
+		} else if req.Measurement.ImageCountPresent {
+			if req.Measurement.ImageCount < 0 {
+				est.Status = StatusInvalidMeasurement
+				est.Reason = ReasonNegativeQuantity
+				est.AmountKnown = false
+				est.Known = false
+				return est
+			}
+			est.Quantity = float64(req.Measurement.ImageCount)
+			est.QuantityKnown = true
+		} else if req.Measurement.VideoTasksPresent {
+			if req.Measurement.VideoTasks < 0 {
+				est.Status = StatusInvalidMeasurement
+				est.Reason = ReasonNegativeQuantity
+				est.AmountKnown = false
+				est.Known = false
+				return est
+			}
+			est.Quantity = float64(req.Measurement.VideoTasks)
+			est.QuantityKnown = true
+		}
+		return est
+	}
+
 	// Route by billing unit
 	switch unit {
 	case config.BillingUnitTokens:

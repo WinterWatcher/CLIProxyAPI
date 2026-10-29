@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
@@ -106,6 +107,24 @@ func (h *OpenAIAPIHandler) NativeOpenAICompat(c *gin.Context, capability string)
 }
 
 func (h *OpenAIAPIHandler) executeNative(c *gin.Context, cfg *config.Config, provider, requested, model, capability string, body []byte, contentType string) {
+	if cfg != nil && cfg.CostGuard.Enabled {
+		measurement := cost.ExtractNativeMeasurement(capability, body, contentType)
+		dec := cost.EvaluatePreflight(cost.GateRequest{
+			Config:      cfg,
+			Provider:    provider,
+			Model:       requested,
+			Capability:  capability,
+			Measurement: measurement,
+			RawPayload:  body,
+			ContentType: contentType,
+		})
+		if !dec.Allowed {
+			errBody, status := cost.BuildGateErrorResponse(dec)
+			c.Data(status, "application/json", errBody)
+			return
+		}
+	}
+
 	compat := nativeCompat(cfg, provider)
 	route := nativeRoute(compat, capability)
 	providerKey := util.OpenAICompatibleProviderKey(strings.ToLower(strings.TrimSpace(provider)))
@@ -314,6 +333,22 @@ func (h *OpenAIAPIHandler) VideoSubmit(c *gin.Context) {
 	payload["model"] = upstream
 	body, _ = json.Marshal(payload)
 
+	if cfg != nil && cfg.CostGuard.Enabled {
+		dec := cost.EvaluatePreflight(cost.GateRequest{
+			Config:      cfg,
+			Provider:    provider,
+			Model:       model,
+			Capability:  "video",
+			Measurement: cost.FromVideoSubmit(1),
+			RawPayload:  body,
+		})
+		if !dec.Allowed {
+			errBody, status := cost.BuildGateErrorResponse(dec)
+			c.Data(status, "application/json", errBody)
+			return
+		}
+	}
+
 	compat := nativeCompat(cfg, provider)
 	route := nativeRoute(compat, "video_submit")
 	providerKey := util.OpenAICompatibleProviderKey(strings.ToLower(strings.TrimSpace(provider)))
@@ -436,6 +471,22 @@ func (h *OpenAIAPIHandler) VideoStatus(c *gin.Context) {
 			nativeContentTypeMetadataKey: "application/json",
 		},
 	}
+	if cfg != nil && cfg.CostGuard.Enabled {
+		dec := cost.EvaluatePreflight(cost.GateRequest{
+			Config:      cfg,
+			Provider:    task.Provider,
+			Model:       task.PublicModel,
+			Capability:  "video_status",
+			Measurement: cost.FromVideoStatus(),
+			RawPayload:  body,
+		})
+		if !dec.Allowed {
+			errBody, status := cost.BuildGateErrorResponse(dec)
+			c.Data(status, "application/json", errBody)
+			return
+		}
+	}
+
 	start := time.Now()
 	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, "video"), []string{providerKey}, coreexecutor.Request{Model: task.PublicModel, Payload: body, Format: "openai"}, opts)
 	emitNativeUsageRecord(c, task.Provider, task.PublicModel, task.UpstreamModel, "video_status", body, resp.Payload, start, err)

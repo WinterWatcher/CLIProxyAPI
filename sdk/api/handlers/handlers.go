@@ -470,6 +470,14 @@ func (h *BaseAPIHandler) SetFullConfig(cfg *config.Config) {
 	}
 }
 
+// GetFullConfig returns the current full application configuration snapshot.
+func (h *BaseAPIHandler) GetFullConfig() *config.Config {
+	if h == nil {
+		return nil
+	}
+	return h.FullConfig
+}
+
 // UpdateClients updates the handlers' client list and configuration.
 // This method is called when the configuration or authentication tokens change.
 //
