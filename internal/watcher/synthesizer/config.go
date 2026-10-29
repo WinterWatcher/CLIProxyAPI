@@ -41,6 +41,9 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	if errValidate := ctx.Config.ValidateCredentialWeights(); errValidate != nil {
 		return nil, fmt.Errorf("synthesize config API key auths: %w", errValidate)
 	}
+	if errValidate := ctx.Config.ValidateCostGuard(); errValidate != nil {
+		return nil, fmt.Errorf("synthesize config API key auths: %w", errValidate)
+	}
 
 	// Gemini API Keys
 	out = append(out, s.synthesizeGeminiKeys(ctx)...)

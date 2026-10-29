@@ -278,6 +278,26 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 	cfg.OpenAICompatibility = out
 }
 
+// SanitizeCostGuard applies safe defaults to explicitly configured cost guard and cost policy structures.
+func (cfg *Config) SanitizeCostGuard() {
+	if cfg == nil {
+		return
+	}
+	if cfg.CostGuard.Enabled || strings.TrimSpace(cfg.CostGuard.Currency) != "" {
+		cfg.CostGuard.ApplyDefaults()
+	}
+	for i := range cfg.OpenAICompatibility {
+		if cfg.OpenAICompatibility[i].CostPolicy != nil {
+			cfg.OpenAICompatibility[i].CostPolicy.ApplyDefaults()
+		}
+		for j := range cfg.OpenAICompatibility[i].Models {
+			if cfg.OpenAICompatibility[i].Models[j].CostPolicy != nil {
+				cfg.OpenAICompatibility[i].Models[j].CostPolicy.ApplyDefaults()
+			}
+		}
+	}
+}
+
 // SanitizeCodexKeys removes Codex API key entries missing a BaseURL.
 // It trims whitespace and preserves order for remaining entries.
 func (cfg *Config) SanitizeCodexKeys() {

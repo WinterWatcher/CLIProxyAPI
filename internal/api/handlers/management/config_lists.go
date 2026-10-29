@@ -917,6 +917,7 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 		SupportPromptCacheKey *bool                               `json:"support-prompt-cache-key"`
 		RequestRetry          *int                                `json:"request-retry"`
 		RequestScopedErrors   *[]config.RequestScopedErrorRule    `json:"request-scoped-errors"`
+		CostPolicy            *config.ProviderCostPolicy          `json:"cost-policy"`
 	}
 	var body struct {
 		Name  *string            `json:"name"`
@@ -997,6 +998,9 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 	}
 	if body.Value.RequestScopedErrors != nil {
 		entry.RequestScopedErrors = append([]config.RequestScopedErrorRule(nil), *body.Value.RequestScopedErrors...)
+	}
+	if body.Value.CostPolicy != nil {
+		entry.CostPolicy = body.Value.CostPolicy.Clone()
 	}
 	normalizeOpenAICompatibilityEntry(&entry)
 	h.cfg.OpenAICompatibility[targetIndex] = entry
@@ -2170,6 +2174,20 @@ func normalizedOpenAICompatibilityEntries(entries []config.OpenAICompatibility) 
 		}
 		if len(copyEntry.RequestScopedErrors) > 0 {
 			copyEntry.RequestScopedErrors = append([]config.RequestScopedErrorRule(nil), copyEntry.RequestScopedErrors...)
+		}
+		if copyEntry.CostPolicy != nil {
+			copyEntry.CostPolicy = copyEntry.CostPolicy.Clone()
+		}
+		if len(copyEntry.Models) > 0 {
+			copyModels := make([]config.OpenAICompatibilityModel, len(copyEntry.Models))
+			for mIdx, m := range copyEntry.Models {
+				copyM := m
+				if m.CostPolicy != nil {
+					copyM.CostPolicy = m.CostPolicy.Clone()
+				}
+				copyModels[mIdx] = copyM
+			}
+			copyEntry.Models = copyModels
 		}
 		normalizeOpenAICompatibilityEntry(&copyEntry)
 		out[i] = copyEntry

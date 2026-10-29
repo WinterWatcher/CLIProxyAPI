@@ -1002,6 +1002,9 @@ type OpenAICompatibility struct {
 
 	// RequestScopedErrors configures custom classification rules for upstream errors.
 	RequestScopedErrors []RequestScopedErrorRule `yaml:"request-scoped-errors,omitempty" json:"request-scoped-errors,omitempty"`
+
+	// CostPolicy optionally defines pricing safety and budgeting rules for this provider.
+	CostPolicy *ProviderCostPolicy `yaml:"cost-policy,omitempty" json:"cost-policy,omitempty"`
 }
 
 // OpenAICompatibilityAPIKey represents an API key configuration with optional proxy setting.
@@ -1060,6 +1063,9 @@ type OpenAICompatibilityModel struct {
 	// Thinking configures the thinking/reasoning capability for this model.
 	// If nil, the model defaults to level-based reasoning with levels ["low", "medium", "high"].
 	Thinking *registry.ThinkingSupport `yaml:"thinking,omitempty" json:"thinking,omitempty"`
+
+	// CostPolicy optionally defines pricing safety rules for this model.
+	CostPolicy *ModelCostPolicy `yaml:"cost-policy,omitempty" json:"cost-policy,omitempty"`
 }
 
 func (m OpenAICompatibilityModel) GetName() string { return m.Name }
@@ -1073,3 +1079,4 @@ func (m OpenAICompatibilityModel) GetIsCompat() bool               { return m.Is
 func (m OpenAICompatibilityModel) GetUseMaxCompletionTokens() bool { return m.UseMaxCompletionTokens }
 
 func (m OpenAICompatibilityModel) GetThinking() *registry.ThinkingSupport { return m.Thinking }
+func (m OpenAICompatibilityModel) GetCostPolicy() *ModelCostPolicy        { return m.CostPolicy }

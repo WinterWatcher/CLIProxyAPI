@@ -209,4 +209,7 @@ type Config struct {
 
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
+
+	// CostGuard defines safety, budgeting, and audit policies for upstream pricing.
+	CostGuard CostGuardConfig `yaml:"cost-guard,omitempty" json:"cost-guard,omitempty"`
 }
