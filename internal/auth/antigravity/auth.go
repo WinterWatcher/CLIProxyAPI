@@ -205,7 +205,7 @@ func (o *AntigravityAuth) FetchUserInfo(ctx context.Context, accessToken string)
 	if accessToken == "" {
 		return "", fmt.Errorf("antigravity userinfo: missing access token")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, UserInfoEndpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, userInfoEndpoint(), nil)
 	if err != nil {
 		return "", fmt.Errorf("antigravity userinfo: create request: %w", err)
 	}
@@ -257,7 +257,7 @@ func (o *AntigravityAuth) FetchProjectID(ctx context.Context, accessToken string
 		return "", fmt.Errorf("marshal request body: %w", errMarshal)
 	}
 
-	endpointURL := fmt.Sprintf("%s/%s:loadCodeAssist", DailyAPIEndpoint, APIVersion)
+	endpointURL := fmt.Sprintf("%s/%s:loadCodeAssist", dailyAPIEndpoint(), APIVersion)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, strings.NewReader(string(rawBody)))
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
@@ -334,7 +334,7 @@ func (o *AntigravityAuth) OnboardUser(ctx context.Context, accessToken, tierID s
 		}
 		reqCtx, cancel = context.WithTimeout(reqCtx, 30*time.Second)
 
-		endpointURL := fmt.Sprintf("%s/%s:onboardUser", DailyAPIEndpoint, APIVersion)
+		endpointURL := fmt.Sprintf("%s/%s:onboardUser", dailyAPIEndpoint(), APIVersion)
 		req, errRequest := http.NewRequestWithContext(reqCtx, http.MethodPost, endpointURL, strings.NewReader(string(rawBody)))
 		if errRequest != nil {
 			cancel()
