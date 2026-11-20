@@ -45,6 +45,12 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.DELETE("/plugins/:id/quota", s.mgmt.ResetPluginQuota)
 		mgmt.POST("/plugins/:id/quota/reset", s.mgmt.ResetPluginQuota)
 
+		mgmt.GET("/security-shield/status", s.mgmt.GetSecurityShieldStatus)
+		mgmt.GET("/security-shield/rules", s.mgmt.GetSecurityShieldRules)
+		mgmt.POST("/security-shield/rules", s.mgmt.PostSecurityShieldRules)
+		mgmt.POST("/security-shield/canary", s.mgmt.PostSecurityShieldCanary)
+		mgmt.POST("/security-shield/diagnose", s.mgmt.PostSecurityShieldDiagnose)
+
 		mgmt.GET("/debug", s.mgmt.GetDebug)
 		mgmt.PUT("/debug", s.mgmt.PutDebug)
 		mgmt.PATCH("/debug", s.mgmt.PutDebug)

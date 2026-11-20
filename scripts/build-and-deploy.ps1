@@ -50,7 +50,7 @@ if ($Deploy) {
     scp -i $ServerKey $BinaryPath "root@${ServerHost}:/opt/clirelay-validation/cli-proxy-api.new"
     
     Write-Host "===> 3. Performing atomic swap and restarting clirelay.service..." -ForegroundColor Cyan
-    ssh -i $ServerKey "root@${ServerHost}" "mv -f /opt/clirelay-validation/cli-proxy-api.new /opt/clirelay-validation/cli-proxy-api && systemctl restart clirelay && systemctl is-active clirelay"
+    ssh -i $ServerKey "root@${ServerHost}" "chmod +x /opt/clirelay-validation/cli-proxy-api.new && mv -f /opt/clirelay-validation/cli-proxy-api.new /opt/clirelay-validation/cli-proxy-api && systemctl restart clirelay && systemctl is-active clirelay"
     
     Write-Host "===> Deployment Completed Successfully!" -ForegroundColor Green
 } else {
