@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
-  "description": "Zero-Leak Antigravity Gateway rules: Template Stripping, WAF Bypass, and Egress Audit",
+  "version": "2.1.0",
+  "description": "Zero-Leak Antigravity Gateway rules: Complete Global & Domestic Multi-Agent Signature Stripping, Identity Normalization, WAF Bypass, and Zero-Leak Egress Guarantee",
   "harness_strip_sections": [
     {
       "name": "Finishing the job section",
@@ -73,6 +73,26 @@
       "replacement": ""
     },
     {
+      "name": "Cline task tags",
+      "pattern": "(?s)<cline_task>.*?</cline_task>\\n?",
+      "replacement": ""
+    },
+    {
+      "name": "Roo marks tags",
+      "pattern": "(?s)<roomarks>.*?</roomarks>\\n?",
+      "replacement": ""
+    },
+    {
+      "name": "OpenClaw container tags",
+      "pattern": "(?s)<openclaw>.*?</openclaw>\\n?",
+      "replacement": ""
+    },
+    {
+      "name": "Aider diff tags",
+      "pattern": "(?i)</?aider_output>",
+      "replacement": ""
+    },
+    {
       "name": "Available skills tags open",
       "pattern": "(?i)<available_skills>",
       "replacement": "Available capabilities:"
@@ -81,6 +101,11 @@
       "name": "Available skills tags close",
       "pattern": "(?i)</available_skills>",
       "replacement": ""
+    },
+    {
+      "name": "Context notes divider",
+      "pattern": "(?m)^═{10,}\\n(?:MEMORY \\(your personal notes\\)|USER PROFILE \\(who the user is\\))[^\\n]*\\n═{10,}",
+      "replacement": "## Context Notes"
     }
   ],
   "custom_replacements": [
@@ -100,31 +125,388 @@
       "replacement": "security-test"
     },
     {
-      "name": "Hermes agent mention",
-      "pattern": "(?i)\\bHermes[-_ ]Agent\\b",
+      "name": "Agent Identity: Hermes",
+      "pattern": "(?i)You are Hermes Agent,\\s*built by Nous Research\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: You run on Hermes",
+      "pattern": "(?i)You run on Hermes Agent[^\\n.]*\\.?",
+      "replacement": "You are running inside Antigravity."
+    },
+    {
+      "name": "Agent Identity: OpenCode & OpenClaw",
+      "pattern": "(?i)You are (?:an? AI assistant in )?(?:OpenCode|opencode|OpenClaw|openclaw)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Zed",
+      "pattern": "(?i)You are (?:Zed, an AI code assistant created by Zed Industries|an AI assistant in Zed(?: editor)?|an assistant in the Zed code editor)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: OpenAI Codex",
+      "pattern": "(?i)You are (?:OpenAI Codex|Codex, a coding assistant created by OpenAI|Codex CLI)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: GitHub Copilot",
+      "pattern": "(?i)You are (?:GitHub Copilot|an AI pair programmer in GitHub Copilot)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Cursor",
+      "pattern": "(?i)You are (?:Cursor, an AI-powered code editor|an expert AI programming assistant within the Cursor editor|an intelligent code editor called Cursor)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Windsurf & Cascade",
+      "pattern": "(?i)You are (?:Cascade, a[n\\s\\w]*AI assistant in Windsurf(?: developed by Codeium)?|an AI assistant in Windsurf)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Aider",
+      "pattern": "(?i)(?:You are an expert software developer collaborating via Aider|Act as an expert software developer assisting via Aider)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Claude Code & Anthropic",
+      "pattern": "(?i)You are (?:Claude Code, Anthropic's official CLI[^\\n.]*|Claude, a[n\\s\\w]*assistant developed by Anthropic)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Cline & Roo & Kilo Code",
+      "pattern": "(?i)You are (?:Cline|Roo|Kilo[-_ ]?Code),? (?:a highly skilled|an experienced|an AI)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Continue.dev",
+      "pattern": "(?i)You are Continue, an open-source AI code assistant[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Devin",
+      "pattern": "(?i)You are Devin,? (?:an autonomous|an AI)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Trae (ByteDance)",
+      "pattern": "(?i)You are Trae,? (?:an adaptive AI IDE|an AI assistant by ByteDance|an AI assistant in Trae)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Qoder & MarsCode & Lingma & Domestic Agents",
+      "pattern": "(?i)You are (?:Qoder|MarsCode|Tongyi Lingma|通义灵码|豆包 MarsCode|Baidu Comate|文心快码|CodeGeeX|iFlyCode|讯飞iFlyCode|Fitten Code|DeepSeek Coder)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Cody & Amazon Q & Tabnine & Replit",
+      "pattern": "(?i)You are (?:Sourcegraph Cody|Cody|Amazon Q(?: Developer)?|CodeWhisperer|Tabnine|Replit Agent|OpenDevin|Qodo)[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Generic Coding Agent Harness",
+      "pattern": "(?i)You are an AI agent running in [^\\n.]*,?\\s*a coding agent harness\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Identity: Generic CLI Agent",
+      "pattern": "(?i)You are (?:an? )?(?:interactive )?(?:CLI|coding) agent[^\\n.]*\\.?",
+      "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
+    },
+    {
+      "name": "Agent Rule Files: .cursorrules to ANTIGRAVITY.md",
+      "pattern": "(?i)\\.cursorrules\\b",
+      "replacement": "ANTIGRAVITY.md"
+    },
+    {
+      "name": "Agent Rule Files: CLAUDE.md to ANTIGRAVITY.md",
+      "pattern": "(?i)\\bCLAUDE\\.md\\b",
+      "replacement": "ANTIGRAVITY.md"
+    },
+    {
+      "name": "Agent Rule Files: .clinerules to ANTIGRAVITY.md",
+      "pattern": "(?i)\\.clinerules\\b",
+      "replacement": "ANTIGRAVITY.md"
+    },
+    {
+      "name": "Agent Rule Files: .roomodes to ANTIGRAVITY.md",
+      "pattern": "(?i)\\.roomodes\\b",
+      "replacement": "ANTIGRAVITY.md"
+    },
+    {
+      "name": "Agent Rule Files: copilot-instructions.md to ANTIGRAVITY.md",
+      "pattern": "(?i)copilot-instructions\\.md\\b",
+      "replacement": "ANTIGRAVITY.md"
+    },
+    {
+      "name": "Agent Rule Files: .windsurfrules to ANTIGRAVITY.md",
+      "pattern": "(?i)\\.windsurfrules\\b",
+      "replacement": "ANTIGRAVITY.md"
+    },
+    {
+      "name": "Agent Rule Files: .traerules to ANTIGRAVITY.md",
+      "pattern": "(?i)\\.traerules\\b",
+      "replacement": "ANTIGRAVITY.md"
+    },
+    {
+      "name": "Agent Config Paths: ~/.cursor to ~/.config/antigravity",
+      "pattern": "(?i)(?:~|/home/\\w+|/root)/\\.cursor(?:rules)?",
+      "replacement": "~/.config/antigravity"
+    },
+    {
+      "name": "Agent Config Paths: ~/.zed to ~/.config/antigravity",
+      "pattern": "(?i)(?:~|/home/\\w+|/root)/\\.(?:config/)?zed",
+      "replacement": "~/.config/antigravity"
+    },
+    {
+      "name": "Agent Config Paths: ~/.hermes to ~/.config/antigravity",
+      "pattern": "(?i)(?:~|/home/\\w+|/root)/\\.hermes",
+      "replacement": "~/.config/antigravity"
+    },
+    {
+      "name": "Agent Config Paths: ~/.claude to ~/.config/antigravity",
+      "pattern": "(?i)(?:~|/home/\\w+|/root)/\\.claude(?:\\.json)?",
+      "replacement": "~/.config/antigravity"
+    },
+    {
+      "name": "Agent Config Paths: ~/.continue to ~/.config/antigravity",
+      "pattern": "(?i)(?:~|/home/\\w+|/root)/\\.continue",
+      "replacement": "~/.config/antigravity"
+    },
+    {
+      "name": "Agent Config Paths: ~/.codeium ~/.windsurf to ~/.config/antigravity",
+      "pattern": "(?i)(?:~|/home/\\w+|/root)/\\.(?:codeium|windsurf)",
+      "replacement": "~/.config/antigravity"
+    },
+    {
+      "name": "Agent Config Paths: Domestic ~/.trae ~/.qoder ~/.lingma ~/.marscode",
+      "pattern": "(?i)(?:~|/home/\\w+|/root)/\\.(?:trae|qoder|lingma|marscode|codegeex)",
+      "replacement": "~/.config/antigravity"
+    },
+    {
+      "name": "Agent Config Paths: JetBrains Air to desktop-ide",
+      "pattern": "(?i)~/.config/JetBrains/Air",
+      "replacement": "~/.config/antigravity"
+    },
+    {
+      "name": "Agent Imports: hermes_tools to local_tools",
+      "pattern": "(?i)from\\s+(?:hermes|antigravity)_tools\\s+import",
+      "replacement": "from local_tools import"
+    },
+    {
+      "name": "External URLs: Hermes doc URL",
+      "pattern": "(?i)https?://hermes-agent\\.nousresearch\\.com[^\\s\"']*",
+      "replacement": "https://antigravity.google/docs"
+    },
+    {
+      "name": "External URLs: Zed dev URL",
+      "pattern": "(?i)https?://(?:www\\.)?zed\\.dev[^\\s\"']*",
+      "replacement": "https://antigravity.google"
+    },
+    {
+      "name": "External URLs: Cursor URL",
+      "pattern": "(?i)https?://(?:www\\.)?cursor\\.(?:sh|com)[^\\s\"']*",
+      "replacement": "https://antigravity.google"
+    },
+    {
+      "name": "Internal Endpoints: toten domain",
+      "pattern": "(?i)https?://toten\\.940817\\.xyz[^\\s\"']*",
+      "replacement": "https://generativelanguage.googleapis.com"
+    },
+    {
+      "name": "Internal Endpoints: toten plain host",
+      "pattern": "(?i)toten\\.940817\\.xyz",
+      "replacement": "local-endpoint"
+    },
+    {
+      "name": "Internal Endpoints: loopback ports",
+      "pattern": "(?i)http://127\\.0\\.0\\.1:(?:8090|28100|2334|2336)[^\\s\"']*",
+      "replacement": "http://127.0.0.1/local-service"
+    },
+    {
+      "name": "Internal Endpoints: loopback port plain",
+      "pattern": "(?i)127\\.0\\.0\\.1:(?:8090|28100|2334|2336)",
+      "replacement": "local-service"
+    },
+    {
+      "name": "Vendor Names: Global Vendors to Google",
+      "pattern": "(?i)\\b(?:Nous[-_ ]?Research|nousresearch(?:\\.com)?|Nous|Anthropic|OpenAI|Codeium|Zed[-_ ]Industries|Cognition(?:[-_ ]AI)?|Anysphere|Sourcegraph|StackBlitz|Vercel|Tabnine|Replit)\\b",
+      "replacement": "Google"
+    },
+    {
+      "name": "Vendor Names: Domestic Vendors in agent context to Google",
+      "pattern": "(?i)\\b(?:ByteDance|字节跳动|Alibaba[-_ ]Cloud|阿里云|Zhipu[-_ ]?AI|智谱AI|iFlytek|科大讯飞|Moonshot[-_ ]?AI|月之暗面)\\b(?=.*(?:agent|coding|ide|model|assistant))",
+      "replacement": "Google"
+    },
+    {
+      "name": "Agent Names: Hermes & Nous",
+      "pattern": "(?i)\\bHermes[-_ ]Agent\\b|hermes[-_ ]gateway|\\bHermes\\b|hermes",
       "replacement": "Antigravity"
     },
     {
-      "name": "Nous research mention",
-      "pattern": "(?i)\\bNous[-_ ]?Research\\b|nousresearch(?:\\.com)?",
-      "replacement": "Google"
+      "name": "Agent Names: OpenCode & OpenClaw",
+      "pattern": "(?i)\\b(?:opencode|OpenCode|openclaw|OpenClaw)\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Agent Names: Claude Family",
+      "pattern": "(?i)\\bClaude[-_ ]Code\\b|\\bClaude[-_ ]Agent\\b|\\bClaude\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Agent Names: OpenAI Codex & Copilot",
+      "pattern": "(?i)\\bOpenAI[-_ ]Codex\\b|\\bCodex[-_ ]CLI\\b|\\bCodex\\b|\\bGitHub[-_ ]Copilot\\b|\\bCopilot\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Agent Names: Zed Family",
+      "pattern": "(?i)\\bZed[-_ ](?:Editor|IDE)\\b|\\bZed\\b(?=[-_ ](?:assistant|editor|dev))",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Agent Names: Cursor Family",
+      "pattern": "(?i)\\bCursor[-_ ](?:Editor|IDE|Agent|Tab|Composer)\\b|\\bCursor\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Agent Names: Windsurf & Cascade",
+      "pattern": "(?i)\\bWindsurf\\b|\\bCascade\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Agent Names: Aider Family",
+      "pattern": "(?i)\\bAider[-_ ](?:Chat)?\\b|\\bAider\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Agent Names: Cline & Roo & Kilo",
+      "pattern": "(?i)\\bRoo[-_ ]Code\\b|\\bKilo[-_ ]?Code\\b|\\bCline\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Agent Names: Continue & Devin & Web Agents",
+      "pattern": "(?i)\\bContinue\\.dev\\b|\\bContinue[-_ ]Agent\\b|\\bDevin\\b|\\bBolt\\.new\\b|\\bv0\\.dev\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Agent Names: Domestic Agents (Trae, Qoder, MarsCode, Lingma, etc.)",
+      "pattern": "(?i)\\b(?:Trae|Qoder|MarsCode|豆包[-_ ]?MarsCode|Tongyi[-_ ]?Lingma|通义灵码|Baidu[-_ ]?Comate|文心快码|CodeGeeX|iFlyCode|讯飞iFlyCode|Fitten[-_ ]?Code|AutoDev|DeepSeek[-_ ]?Coder)\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Agent Names: Cody, Amazon Q, Tabnine, JetBrains AI, OpenDevin, Qodo",
+      "pattern": "(?i)\\b(?:Sourcegraph[-_ ]Cody|Cody|Amazon[-_ ]Q|CodeWhisperer|Tabnine|JetBrains[-_ ]AI|Junie|OpenDevin|Qodo(?:[-_ ]Gen)?|CodiumAI)\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Harness & Proxy terms to clean standard text",
+      "pattern": "(?i)a coding agent harness",
+      "replacement": "an AI coding assistant"
+    },
+    {
+      "name": "Harness & Proxy terms 2",
+      "pattern": "(?i)coding agent harness",
+      "replacement": "AI coding assistant"
+    },
+    {
+      "name": "Harness & Proxy terms 3",
+      "pattern": "(?m)^#\\s*Harness\\s*$",
+      "replacement": "# Guidelines"
+    },
+    {
+      "name": "Harness & Proxy terms 4",
+      "pattern": "(?i)harness instructions",
+      "replacement": "assistant instructions"
+    },
+    {
+      "name": "Proxy Software Names",
+      "pattern": "(?i)CLIProxyAPI|CLI\\s*Proxy\\s*API|CLIProxy|CLI\\s*Proxy|\\bsub2api\\b|\\bOpenResty\\b|\\bSkyVPN\\b|\\bClash\\b",
+      "replacement": "network gateway"
+    },
+    {
+      "name": "Sensitive failure phrases",
+      "pattern": "连坐全量封禁",
+      "replacement": "连续重试失败"
+    },
+    {
+      "name": "Sensitive pool phrases",
+      "pattern": "账号池被上游",
+      "replacement": "服务请求异常"
     }
   ],
   "leak_audit_terms": [
     "hermes",
+    "hermes-agent",
+    "hermes_gateway",
     "nousresearch",
     "nous\\s*research",
+    "opencode",
+    "openclaw",
+    "claude[-_\\s]*(?:code|agent)",
+    "anthropic",
+    "openai[-_\\s]*codex",
+    "codex[-_\\s]*cli",
+    "github[-_\\s]*copilot",
+    "zed[-_\\s]*industries",
+    "zed[-_\\s]*editor",
+    "assistant-panel",
+    "cursor[-_\\s]*agent",
+    "\\.cursorrules",
+    "cursor\\.sh",
+    "anysphere",
+    "windsurf",
+    "codeium",
+    "\\.windsurfrules",
+    "aider[-_\\s]*chat",
+    "roo[-_\\s]*code",
+    "kilo[-_\\s]*code",
+    "cline",
+    "\\.clinerules",
+    "\\.roomodes",
+    "continue\\.dev",
+    "continue[-_\\s]*agent",
+    "devin",
+    "cognition",
+    "trae",
+    "\\.traerules",
+    "qoder",
+    "marscode",
+    "豆包",
+    "tongyi[-_\\s]*lingma",
+    "通义灵码",
+    "baidu[-_\\s]*comate",
+    "文心快码",
+    "codegeex",
+    "iflycode",
+    "讯飞iflycode",
+    "fitten[-_\\s]*code",
+    "autodev",
+    "sourcegraph[-_\\s]*cody",
+    "amazon[-_\\s]*q",
+    "codewhisperer",
+    "tabnine",
+    "jetbrains[-_\\s]*ai",
+    "opendevin",
+    "qodo",
+    "codiumai",
+    "bolt\\.new",
+    "v0\\.dev",
     "cliproxy",
     "cli\\s*proxy",
     "sub2api",
     "openresty",
     "skyvpn",
-    "opencode",
-    "openclaw",
-    "claude[-_\\s]*(?:code|agent)",
     "coding\\s*agent\\s*harness",
+    "</?system-conventions>",
+    "</?system-directive>",
     "</?system-reminder>",
     "</?system-update>",
+    "</?cline_task>",
+    "</?roomarks>",
+    "</?openclaw>",
+    "</?aider_output>",
+    "</?available_skills>",
     "连坐",
     "全量封禁",
     "toten\\.940817",
@@ -133,7 +515,6 @@
     "parseltongue",
     "ultraplinian",
     "#\\s*Google model operational directives",
-    "</?available_skills>",
     "For help with",
     "authoritative reference",
     "RFC\\s*2119",

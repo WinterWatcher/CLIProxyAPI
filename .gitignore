@@ -67,5 +67,9 @@ _bmad-output/*
 docker-compose.override.yml
 
 
+# Python
+__pycache__/
+*.pyc
+
 # Local LLM Wiki vault
 .llm-wiki
