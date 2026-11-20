@@ -77,7 +77,9 @@ func (e *AntigravityExecutor) buildRequestDoc(ctx context.Context, auth *cliprox
 	}
 
 	isClaudeModel := strings.Contains(modelName, "claude")
-	useAntigravitySchema := isClaudeModel || strings.Contains(modelName, "gemini-3-pro") || strings.Contains(modelName, "gemini-3.1-pro")
+	// Antigravity 针对 Google 后端（包括 Gemini 与 Claude）均必须使用 Antigravity Schema 规范，
+	// 覆盖所有 gemini 系列模型（如 gemini-3.8-flash-high 等）
+	useAntigravitySchema := true
 	if antigravityRequestNeedsSchemaSanitizationDoc(doc) {
 		sanitizeAntigravityRequestSchemasForModelDoc(doc, useAntigravitySchema, isClaudeModel)
 	}
@@ -244,10 +246,10 @@ var antigravityDeclarationContainers = []string{"functionDeclarations", "functio
 // sjson edits, scoped to one declaration.
 func sanitizeAntigravityToolSchemaDocumentForModel(payloadStr string, useAntigravitySchema, isClaudeModel bool) string {
 	toolSchemaCleaner := func(schema string, isParameterSchema bool) string {
-		// Only declaration parameter schemas become Claude custom.input_schema upstream,
-		// so only they need Claude union flattening. Function return schemas keep the
-		// union-preserving cleaning like every other response-side schema.
-		if isClaudeModel && isParameterSchema {
+		// Google Cloud Code / Antigravity 上游（无论是 Claude 还是 Gemini，如 gemini-3.8-flash-high）
+		// 均无法在 FunctionDeclaration parameters 中接受未展平的 multi-branch anyOf/oneOf 联合类型，
+		// 否则上游校验层会秒返 429 RESOURCE_EXHAUSTED。因此 declaration parameterSchema 必须统一展平 union。
+		if isParameterSchema {
 			return util.CleanJSONSchemaForAntigravityClaudeTool(schema, useAntigravitySchema)
 		}
 		return util.CleanJSONSchemaForAntigravityTool(schema, useAntigravitySchema)
