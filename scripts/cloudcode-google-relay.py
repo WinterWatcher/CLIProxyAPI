@@ -850,9 +850,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         leak_hits,
                         resp.status,
                     )
-                    # 账号安全防线：针对上游风控与权限错误输出强警告
+                    # 账号安全防线：针对上游风控与权限错误输出强警告（区分未携带 Token 的匿名探针）
                     if resp.status in (401, 403):
-                        logging.critical('ACCOUNT_DEFENSE_TRIGGERED: status=%d possible_token_expiry_or_waf_block', resp.status)
+                        auth_preview = (self.headers.get('Authorization') or '')[:30]
+                        if not auth_preview:
+                            logging.info('UNAUTHENTICATED_PROBE: path=%s status=%d', target_path, resp.status)
+                        else:
+                            logging.critical(
+                                'ACCOUNT_DEFENSE_TRIGGERED: status=%d path=%s host=%s auth=%s model=%s',
+                                resp.status,
+                                target_path,
+                                target_host,
+                                auth_preview,
+                                model_name,
+                            )
 
                 self.send_response(resp.status)
                 for k, v in resp.getheaders():
