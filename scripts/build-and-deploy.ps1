@@ -25,7 +25,10 @@ docker run --rm `
     -e CGO_ENABLED=1 `
     -e GOOS=linux `
     -e GOARCH=amd64 `
-    -e GOPROXY="https://goproxy.cn,direct" `
+    -e HTTP_PROXY="http://host.docker.internal:7890" `
+    -e HTTPS_PROXY="http://host.docker.internal:7890" `
+    -e GOPROXY="https://goproxy.cn,https://proxy.golang.org,direct" `
+    -v go-pkg-cache:/go/pkg/mod `
     -v "${RepoRoot}:/app" `
     -w /app `
     golang:1.26.11-bookworm `
