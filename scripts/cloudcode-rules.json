@@ -1,6 +1,6 @@
 {
-  "version": "2.1.0",
-  "description": "Zero-Leak Antigravity Gateway rules: Complete Global & Domestic Multi-Agent Signature Stripping, Identity Normalization, WAF Bypass, and Zero-Leak Egress Guarantee",
+  "version": "3.0.0",
+  "description": "Zero-Leak Antigravity Gateway rules: Comprehensive Global & Domestic Multi-Agent Signature Stripping, Identity Normalization, WAF Bypass, and Zero-Leak Egress Guarantee",
   "harness_strip_sections": [
     {
       "name": "Finishing the job section",
@@ -59,7 +59,7 @@
     },
     {
       "name": "Claude and Agent XML instruction blocks",
-      "pattern": "(?s)<system[-_](conventions|directive)>.*?</system[-_](conventions|directive)>\\n?",
+      "pattern": "(?s)<system[-_](conventions|directive|information)>.*?</system[-_](conventions|directive|information)>\\n?",
       "replacement": ""
     },
     {
@@ -195,13 +195,13 @@
       "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
     },
     {
-      "name": "Agent Identity: Qoder & MarsCode & Lingma & Domestic Agents",
-      "pattern": "(?i)You are (?:Qoder|MarsCode|Tongyi Lingma|通义灵码|豆包 MarsCode|Baidu Comate|文心快码|CodeGeeX|iFlyCode|讯飞iFlyCode|Fitten Code|DeepSeek Coder)[^\\n.]*\\.?",
+      "name": "Agent Identity: Domestic Agents (MarsCode, Lingma, Comate, CodeGeeX, iFlyCode, etc.)",
+      "pattern": "(?i)You are (?:Qoder|MarsCode|豆包[-_ ]?MarsCode|Tongyi[-_ ]?Lingma|通义灵码|阿里灵码|Baidu[-_ ]?Comate|文心快码|CodeGeeX|iFlyCode|讯飞iFlyCode|Fitten[-_ ]?Code|AutoDev|DeepSeek[-_ ]?Coder|腾讯云[-_ ]?AI代码助手|CodeArts[-_ ]?Snap)[^\\n.]*\\.?",
       "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
     },
     {
-      "name": "Agent Identity: Cody & Amazon Q & Tabnine & Replit",
-      "pattern": "(?i)You are (?:Sourcegraph Cody|Cody|Amazon Q(?: Developer)?|CodeWhisperer|Tabnine|Replit Agent|OpenDevin|Qodo)[^\\n.]*\\.?",
+      "name": "Agent Identity: Global Agents (Cody, Amazon Q, Tabnine, Replit, OpenDevin, Goose, SWE-Agent)",
+      "pattern": "(?i)You are (?:Sourcegraph[-_ ]Cody|Cody|Amazon[-_ ]Q(?:[-_ ]Developer)?|CodeWhisperer|Tabnine|Replit[-_ ]?Agent|OpenDevin|Qodo(?:[-_ ]Gen)?|CodiumAI|Goose|SWE[-_ ]Agent)[^\\n.]*\\.?",
       "replacement": "You are Antigravity, an advanced AI coding assistant developed by Google."
     },
     {
@@ -250,6 +250,11 @@
       "replacement": "ANTIGRAVITY.md"
     },
     {
+      "name": "Agent Rule Files: Domestic rule files to ANTIGRAVITY.md",
+      "pattern": "(?i)\\.(?:marscoderules|lingmarules|comaterules)\\b",
+      "replacement": "ANTIGRAVITY.md"
+    },
+    {
       "name": "Agent Config Paths: ~/.cursor to ~/.config/antigravity",
       "pattern": "(?i)(?:~|/home/\\w+|/root)/\\.cursor(?:rules)?",
       "replacement": "~/.config/antigravity"
@@ -280,8 +285,8 @@
       "replacement": "~/.config/antigravity"
     },
     {
-      "name": "Agent Config Paths: Domestic ~/.trae ~/.qoder ~/.lingma ~/.marscode",
-      "pattern": "(?i)(?:~|/home/\\w+|/root)/\\.(?:trae|qoder|lingma|marscode|codegeex)",
+      "name": "Agent Config Paths: Domestic ~/.trae ~/.qoder ~/.lingma ~/.marscode ~/.codegeex ~/.comate ~/.codearts",
+      "pattern": "(?i)(?:~|/home/\\w+|/root)/\\.(?:trae|qoder|lingma|marscode|codegeex|comate|codearts|iflycode)",
       "replacement": "~/.config/antigravity"
     },
     {
@@ -331,12 +336,12 @@
     },
     {
       "name": "Vendor Names: Global Vendors to Google",
-      "pattern": "(?i)\\b(?:Nous[-_ ]?Research|nousresearch(?:\\.com)?|Nous|Anthropic|OpenAI|Codeium|Zed[-_ ]Industries|Cognition(?:[-_ ]AI)?|Anysphere|Sourcegraph|StackBlitz|Vercel|Tabnine|Replit)\\b",
+      "pattern": "(?i)\\b(?:Nous[-_ ]?Research|nousresearch(?:\\.com)?|Nous|Anthropic|OpenAI|Codeium|Zed[-_ ]Industries|Cognition(?:[-_ ]AI)?|Anysphere|Sourcegraph|StackBlitz|Vercel|Tabnine|Replit|Block|OctoMind)\\b",
       "replacement": "Google"
     },
     {
       "name": "Vendor Names: Domestic Vendors in agent context to Google",
-      "pattern": "(?i)\\b(?:ByteDance|字节跳动|Alibaba[-_ ]Cloud|阿里云|Zhipu[-_ ]?AI|智谱AI|iFlytek|科大讯飞|Moonshot[-_ ]?AI|月之暗面)\\b(?=.*(?:agent|coding|ide|model|assistant))",
+      "pattern": "(?i)\\b(?:ByteDance|字节跳动|Alibaba[-_ ]Cloud|阿里云|Zhipu[-_ ]?AI|智谱AI|iFlytek|科大讯飞|Moonshot[-_ ]?AI|月之暗面|Baidu|百度|Tencent|腾讯|Huawei|华为)\\b(?=.*(?:agent|coding|ide|model|assistant|prompt|code))",
       "replacement": "Google"
     },
     {
@@ -390,13 +395,13 @@
       "replacement": "Antigravity"
     },
     {
-      "name": "Agent Names: Domestic Agents (Trae, Qoder, MarsCode, Lingma, etc.)",
-      "pattern": "(?i)\\b(?:Trae|Qoder|MarsCode|豆包[-_ ]?MarsCode|Tongyi[-_ ]?Lingma|通义灵码|Baidu[-_ ]?Comate|文心快码|CodeGeeX|iFlyCode|讯飞iFlyCode|Fitten[-_ ]?Code|AutoDev|DeepSeek[-_ ]?Coder)\\b",
+      "name": "Agent Names: Domestic Agents (Trae, Qoder, MarsCode, Lingma, Comate, etc.)",
+      "pattern": "(?i)\\b(?:Trae|Qoder|MarsCode|豆包[-_ ]?MarsCode|Tongyi[-_ ]?Lingma|通义灵码|阿里灵码|Baidu[-_ ]?Comate|文心快码|CodeGeeX|iFlyCode|讯飞iFlyCode|Fitten[-_ ]?Code|AutoDev|DeepSeek[-_ ]?Coder|腾讯云[-_ ]?AI代码助手|CodeArts[-_ ]?Snap)\\b",
       "replacement": "Antigravity"
     },
     {
-      "name": "Agent Names: Cody, Amazon Q, Tabnine, JetBrains AI, OpenDevin, Qodo",
-      "pattern": "(?i)\\b(?:Sourcegraph[-_ ]Cody|Cody|Amazon[-_ ]Q|CodeWhisperer|Tabnine|JetBrains[-_ ]AI|Junie|OpenDevin|Qodo(?:[-_ ]Gen)?|CodiumAI)\\b",
+      "name": "Agent Names: Cody, Amazon Q, Tabnine, JetBrains AI, OpenDevin, Qodo, Goose, SWE-Agent",
+      "pattern": "(?i)\\b(?:Sourcegraph[-_ ]Cody|Cody|Amazon[-_ ]Q|CodeWhisperer|Tabnine|JetBrains[-_ ]AI|Junie|OpenDevin|Qodo(?:[-_ ]Gen)?|CodiumAI|Goose|SWE[-_ ]Agent)\\b",
       "replacement": "Antigravity"
     },
     {
@@ -475,6 +480,7 @@
     "豆包",
     "tongyi[-_\\s]*lingma",
     "通义灵码",
+    "阿里灵码",
     "baidu[-_\\s]*comate",
     "文心快码",
     "codegeex",
@@ -482,6 +488,8 @@
     "讯飞iflycode",
     "fitten[-_\\s]*code",
     "autodev",
+    "deepseek[-_\\s]*coder",
+    "codearts[-_\\s]*snap",
     "sourcegraph[-_\\s]*cody",
     "amazon[-_\\s]*q",
     "codewhisperer",
@@ -490,6 +498,8 @@
     "opendevin",
     "qodo",
     "codiumai",
+    "replit[-_\\s]*agent",
+    "swe[-_\\s]*agent",
     "bolt\\.new",
     "v0\\.dev",
     "cliproxy",

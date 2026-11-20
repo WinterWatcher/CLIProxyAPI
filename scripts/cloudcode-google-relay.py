@@ -174,6 +174,14 @@ TEXT_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
         'You are Antigravity, an advanced AI coding assistant developed by Google.',
     ),
     (
+        re.compile(r'(?i)You are (?:Qoder|MarsCode|豆包[-_ ]?MarsCode|Tongyi[-_ ]?Lingma|通义灵码|阿里灵码|Baidu[-_ ]?Comate|文心快码|CodeGeeX|iFlyCode|讯飞iFlyCode|Fitten[-_ ]?Code|AutoDev|DeepSeek[-_ ]?Coder|腾讯云[-_ ]?AI代码助手|CodeArts[-_ ]?Snap)[^\n.]*\.?'),
+        'You are Antigravity, an advanced AI coding assistant developed by Google.',
+    ),
+    (
+        re.compile(r'(?i)You are (?:Sourcegraph[-_ ]Cody|Cody|Amazon[-_ ]Q(?:[-_ ]Developer)?|CodeWhisperer|Tabnine|Replit[-_ ]?Agent|OpenDevin|Qodo(?:[-_ ]Gen)?|CodiumAI|Goose|SWE[-_ ]Agent)[^\n.]*\.?'),
+        'You are Antigravity, an advanced AI coding assistant developed by Google.',
+    ),
+    (
         re.compile(r'(?i)You are an AI agent running in [^\n.]*,?\s*a coding agent harness\.?'),
         'You are Antigravity, an advanced AI coding assistant developed by Google.',
     ),
@@ -195,13 +203,15 @@ TEXT_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r'(?i)\.roomodes\b'), 'ANTIGRAVITY.md'),
     (re.compile(r'(?i)copilot-instructions\.md\b'), 'ANTIGRAVITY.md'),
     (re.compile(r'(?i)\.windsurfrules\b'), 'ANTIGRAVITY.md'),
+    (re.compile(r'(?i)\.traerules\b'), 'ANTIGRAVITY.md'),
+    (re.compile(r'(?i)\.(?:marscoderules|lingmarules|comaterules)\b'), 'ANTIGRAVITY.md'),
     (re.compile(r'(?i)(?:~|/home/\w+|/root)/\.cursor(?:rules)?'), '~/.config/antigravity'),
     (re.compile(r'(?i)(?:~|/home/\w+|/root)/\.(?:config/)?zed'), '~/.config/antigravity'),
     (re.compile(r'(?i)(?:~|/home/\w+|/root)/\.hermes'), '~/.config/antigravity'),
     (re.compile(r'(?i)(?:~|/home/\w+|/root)/\.claude(?:\.json)?'), '~/.config/antigravity'),
     (re.compile(r'(?i)(?:~|/home/\w+|/root)/\.continue'), '~/.config/antigravity'),
     (re.compile(r'(?i)(?:~|/home/\w+|/root)/\.(?:codeium|windsurf)'), '~/.config/antigravity'),
-    (re.compile(r'(?i)(?:~|/home/\w+|/root)/\.(?:trae|qoder)'), '~/.config/antigravity'),
+    (re.compile(r'(?i)(?:~|/home/\w+|/root)/\.(?:trae|qoder|lingma|marscode|codegeex|comate|codearts|iflycode)'), '~/.config/antigravity'),
 
     # 4. 文档 URL、本机路径与反代/代理基础设施泄露词清理
     (re.compile(r'(?i)https?://hermes-agent\.nousresearch\.com[^\s"\']*'), 'https://antigravity.google/docs'),
@@ -591,12 +601,15 @@ def sanitize_antigravity_tools(payload_obj: dict) -> int:
                     fds = t.get("functionDeclarations", [])
                     if isinstance(fds, list):
                         for fd in fds:
-                            if isinstance(fd, dict) and "parameters" in fd and isinstance(fd["parameters"], dict):
-                                orig_str = json.dumps(fd["parameters"])
-                                fd["parameters"] = sanitize_gemini_schema(fd["parameters"])
-                                new_str = json.dumps(fd["parameters"])
-                                if orig_str != new_str:
-                                    cleaned_count += 1
+                            if isinstance(fd, dict):
+                                if "description" in fd and isinstance(fd["description"], str):
+                                    fd["description"] = _sanitize_text(fd["description"])
+                                if "parameters" in fd and isinstance(fd["parameters"], dict):
+                                    orig_str = json.dumps(fd["parameters"])
+                                    fd["parameters"] = sanitize_gemini_schema(fd["parameters"])
+                                    new_str = json.dumps(fd["parameters"])
+                                    if orig_str != new_str:
+                                        cleaned_count += 1
     return cleaned_count
 
 
@@ -732,6 +745,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_error(404)
             return
         target_host, target_path = route
+
+        # URL 查询参数白名单清洗：阻断 URL 层面泄露客户端身份信息
+        if '?' in target_path:
+            base_p, qs = target_path.split('?', 1)
+            valid_parts = []
+            for q_part in qs.split('&'):
+                if '=' in q_part:
+                    qk, qv = q_part.split('=', 1)
+                    if qk.lower() in ('alt', '$alt', 'key'):
+                        valid_parts.append(f"{qk}={qv}")
+            target_path = f"{base_p}?{'&'.join(valid_parts)}" if valid_parts else base_p
 
         try:
             n = int(self.headers.get('Content-Length', '0'))
