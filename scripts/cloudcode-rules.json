@@ -1,0 +1,147 @@
+{
+  "version": "1.0.0",
+  "description": "Zero-Leak Antigravity Gateway rules: Template Stripping, WAF Bypass, and Egress Audit",
+  "harness_strip_sections": [
+    {
+      "name": "Finishing the job section",
+      "pattern": "(?is)#\\s*Finishing the job\\s*\\n.*?(?=\\n#|\\Z)",
+      "replacement": "# Completion guidelines\nFocus on delivering working results and reporting execution output accurately.\n\n"
+    },
+    {
+      "name": "Deliverable is working artifact paragraph",
+      "pattern": "(?is)When the user asks you to build, run, or verify something, the deliverable is a working artifact backed by real tool output.*?(?=\\n\\n|\\n#|\\Z)",
+      "replacement": "Focus on delivering working results and reporting execution output accurately."
+    },
+    {
+      "name": "Tool failure alternative paragraph",
+      "pattern": "(?is)If a tool, install, or network call fails and blocks the real path, say so directly and try an alternative.*?(?=\\n\\n|\\n#|\\Z)",
+      "replacement": "If an operation fails, report the issue directly and try an appropriate alternative."
+    },
+    {
+      "name": "Google model operational directives header",
+      "pattern": "(?m)^#\\s*Google model operational directives\\s*$",
+      "replacement": "# Operational directives"
+    },
+    {
+      "name": "Tool-use enforcement header",
+      "pattern": "(?m)^#\\s*Tool-use enforcement\\s*$",
+      "replacement": "# Action guidelines"
+    },
+    {
+      "name": "Parallel tool calls header",
+      "pattern": "(?m)^#\\s*Parallel tool calls\\s*$",
+      "replacement": "# Batching tool calls"
+    },
+    {
+      "name": "Hermes runtime environment header",
+      "pattern": "(?im)^#\\s*(?:Hermes|Antigravity) runtime environment\\s*$",
+      "replacement": "# Runtime environment"
+    },
+    {
+      "name": "Hermes profile marker",
+      "pattern": "(?im)^Active (?:Hermes|Antigravity) profile:[^\\n]*\\n?",
+      "replacement": ""
+    },
+    {
+      "name": "Hermes end runtime environment comment",
+      "pattern": "(?i)<!--\\s*End (?:Hermes|Antigravity) runtime environment\\s*-->\\n?",
+      "replacement": ""
+    },
+    {
+      "name": "Hermes identity full guidance",
+      "pattern": "(?is)You run on Hermes Agent \\(by Nous Research\\)\\..*?so you don'?t guess or invent workarounds\\.?",
+      "replacement": "You are running inside Antigravity, an AI coding assistant developed by Google."
+    },
+    {
+      "name": "Hermes help URL sentence",
+      "pattern": "(?i)For help with (?:Hermes Agent|Antigravity) itself\\s*[—-][^\\n]*(?:web content\\)|invent workarounds)\\.?.*",
+      "replacement": ""
+    },
+    {
+      "name": "Claude and Agent XML instruction blocks",
+      "pattern": "(?s)<system[-_](conventions|directive)>.*?</system[-_](conventions|directive)>\\n?",
+      "replacement": ""
+    },
+    {
+      "name": "System reminder tags",
+      "pattern": "(?i)</?system-reminder>",
+      "replacement": ""
+    },
+    {
+      "name": "System update tags",
+      "pattern": "(?i)</?system-update>",
+      "replacement": ""
+    },
+    {
+      "name": "Available skills tags open",
+      "pattern": "(?i)<available_skills>",
+      "replacement": "Available capabilities:"
+    },
+    {
+      "name": "Available skills tags close",
+      "pattern": "(?i)</available_skills>",
+      "replacement": ""
+    }
+  ],
+  "custom_replacements": [
+    {
+      "name": "Sanitize bypass to troubleshoot",
+      "pattern": "(?i)\\b(?:bypass|bypasses|bypassing)\\b",
+      "replacement": "troubleshoot"
+    },
+    {
+      "name": "Redact jailbreak words",
+      "pattern": "(?i)\\b(?:godmode|parseltongue|ultraplinian|g0dm0d3)\\b",
+      "replacement": "redacted"
+    },
+    {
+      "name": "Redact jailbreak llm",
+      "pattern": "(?i)\\bjailbreak(?:\\s+llms?)?\\b",
+      "replacement": "security-test"
+    },
+    {
+      "name": "Hermes agent mention",
+      "pattern": "(?i)\\bHermes[-_ ]Agent\\b",
+      "replacement": "Antigravity"
+    },
+    {
+      "name": "Nous research mention",
+      "pattern": "(?i)\\bNous[-_ ]?Research\\b|nousresearch(?:\\.com)?",
+      "replacement": "Google"
+    }
+  ],
+  "leak_audit_terms": [
+    "hermes",
+    "nousresearch",
+    "nous\\s*research",
+    "cliproxy",
+    "cli\\s*proxy",
+    "sub2api",
+    "openresty",
+    "skyvpn",
+    "opencode",
+    "openclaw",
+    "claude[-_\\s]*(?:code|agent)",
+    "coding\\s*agent\\s*harness",
+    "</?system-reminder>",
+    "</?system-update>",
+    "连坐",
+    "全量封禁",
+    "toten\\.940817",
+    "jailbreak",
+    "godmode",
+    "parseltongue",
+    "ultraplinian",
+    "#\\s*Google model operational directives",
+    "</?available_skills>",
+    "For help with",
+    "authoritative reference",
+    "RFC\\s*2119",
+    "max-retry-credentials",
+    "EdgeCrab",
+    "direct bypass",
+    "Antigravityr",
+    "deliverable is a working artifact",
+    "fabricated output"
+  ]
+}

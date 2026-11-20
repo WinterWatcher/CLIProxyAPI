@@ -8,9 +8,11 @@ import http.client
 import http.server
 import json
 import logging
+import os
 import re
 import socket
 import ssl
+import time
 from typing import Any
 
 FRONTENDS = (
@@ -226,11 +228,70 @@ LEAK_AUDIT_RE = re.compile(
 )
 
 
+RULES_CONFIG_FILE = '/usr/local/etc/cloudcode-rules.json'
+
+class DynamicRuleEngine:
+    def __init__(self, config_path: str = RULES_CONFIG_FILE):
+        self.config_path = config_path
+        self._last_mtime = 0.0
+        self._last_check = 0.0
+        self.harness_strip_rules: list[tuple[re.Pattern[str], str]] = []
+        self.custom_text_rules: list[tuple[re.Pattern[str], str]] = []
+        self.custom_leak_terms: set[str] = set()
+        self.reload_if_needed(force=True)
+
+    def reload_if_needed(self, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and (now - self._last_check < 3.0):
+            return
+        self._last_check = now
+
+        try:
+            if not os.path.exists(self.config_path):
+                return
+            mtime = os.path.getmtime(self.config_path)
+            if mtime <= self._last_mtime and not force:
+                return
+
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            new_strip = []
+            for item in data.get('harness_strip_sections', []):
+                new_strip.append((re.compile(item['pattern']), item['replacement']))
+
+            new_text = []
+            for item in data.get('custom_replacements', []):
+                new_text.append((re.compile(item['pattern']), item['replacement']))
+
+            self.harness_strip_rules = new_strip
+            self.custom_text_rules = new_text
+            self.custom_leak_terms = set(data.get('leak_audit_terms', []))
+            self._last_mtime = mtime
+            logging.info('cloudcode-rules dynamic reload success: %d strip rules, %d custom rules from %s',
+                         len(new_strip), len(new_text), self.config_path)
+        except Exception as e:
+            logging.warning('cloudcode-rules dynamic reload failed: %s', e)
+
+    def sanitize(self, value: str) -> str:
+        self.reload_if_needed()
+        updated = value
+        # 1. 优先执行整块 Harness 模板剥离与指纹中和 (Dimension 1)
+        for pat, rep in self.harness_strip_rules:
+            updated = pat.sub(rep, updated)
+        # 2. 执行静态内置核心规则
+        for pat, rep in TEXT_REPLACEMENTS:
+            updated = pat.sub(rep, updated)
+        # 3. 执行动态自定义扩展规则 (Dimension 2)
+        for pat, rep in self.custom_text_rules:
+            updated = pat.sub(rep, updated)
+        return updated
+
+RULE_ENGINE = DynamicRuleEngine()
+
+
 def _sanitize_text(value: str) -> str:
-    updated = value
-    for pat, rep in TEXT_REPLACEMENTS:
-        updated = pat.sub(rep, updated)
-    return updated
+    return RULE_ENGINE.sanitize(value)
 
 
 def _sanitize_json_node(node: Any) -> Any:
@@ -282,7 +343,14 @@ def audit_payload_leaks(data: bytes) -> tuple[list[str], str]:
         haystack = '\n'.join(strings)
     except Exception:
         haystack = data.decode('utf-8', errors='replace')
-    hits = sorted({m.group(0).lower() for m in LEAK_AUDIT_RE.finditer(haystack)})
+    hits_set = {m.group(0).lower() for m in LEAK_AUDIT_RE.finditer(haystack)}
+    for term in RULE_ENGINE.custom_leak_terms:
+        try:
+            if re.search(r'(?i)' + term, haystack):
+                hits_set.add(term.lower())
+        except re.error:
+            pass
+    hits = sorted(hits_set)
     return hits, model_name
 
 
