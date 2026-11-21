@@ -20,6 +20,11 @@ if (-not (Test-Path $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 }
 
+$BinaryPath = Join-Path $OutputDir "cli-proxy-api"
+if (Test-Path $BinaryPath) {
+    Remove-Item -Force $BinaryPath
+}
+
 # Run docker build container locally
 docker run --rm `
     -e CGO_ENABLED=1 `
@@ -36,6 +41,11 @@ docker run --rm `
     -ldflags="-s -w -X 'main.Version=$Version' -X 'main.Commit=$Commit' -X 'main.BuildDate=$BuildDate'" `
     -o /app/dist/cli-proxy-api ./cmd/server/
 
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Docker go build failed with exit code $LASTEXITCODE"
+    exit 1
+}
+
 $BinaryPath = Join-Path $OutputDir "cli-proxy-api"
 if (-not (Test-Path $BinaryPath)) {
     Write-Error "Build failed: $BinaryPath not found!"
@@ -49,8 +59,8 @@ if ($Deploy) {
     Write-Host "===> 2. Deploying binary to $ServerHost via scp..." -ForegroundColor Cyan
     scp -i $ServerKey $BinaryPath "root@${ServerHost}:/opt/clirelay-validation/cli-proxy-api.new"
     
-    Write-Host "===> 3. Performing atomic swap and restarting clirelay.service..." -ForegroundColor Cyan
-    ssh -i $ServerKey "root@${ServerHost}" "chmod +x /opt/clirelay-validation/cli-proxy-api.new && mv -f /opt/clirelay-validation/cli-proxy-api.new /opt/clirelay-validation/cli-proxy-api && systemctl restart clirelay && systemctl is-active clirelay"
+    Write-Host "===> 3. Performing backup, atomic swap and restarting clirelay.service..." -ForegroundColor Cyan
+    ssh -i $ServerKey "root@${ServerHost}" "cp -a /opt/clirelay-validation/cli-proxy-api /opt/clirelay-validation/cli-proxy-api.bak-`$(date +%Y%m%d%H%M%S) 2>/dev/null || true && chmod +x /opt/clirelay-validation/cli-proxy-api.new && mv -f /opt/clirelay-validation/cli-proxy-api.new /opt/clirelay-validation/cli-proxy-api && systemctl restart clirelay && systemctl is-active clirelay"
     
     Write-Host "===> Deployment Completed Successfully!" -ForegroundColor Green
 } else {
