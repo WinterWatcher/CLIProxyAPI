@@ -23,11 +23,27 @@ func userInfoEndpoint() string {
 	return UserInfoEndpoint
 }
 
+// ResolveDailyAPIEndpoint 返回环境变量覆盖的 Antigravity Daily API 根地址（不带结尾斜杠）；
+// 未设置 ANTIGRAVITY_DAILY_API_ENDPOINT 时返回空字符串。
+func ResolveDailyAPIEndpoint() string {
+	return strings.TrimRight(strings.TrimSpace(os.Getenv(EnvDailyAPIEndpoint)), "/")
+}
+
+// IsOfficialCloudCodeEndpoint 判断目标地址是否指向 Google 官方 Cloud Code 直连域名。
+// 当部署环境启用了本机安全中继（ANTIGRAVITY_DAILY_API_ENDPOINT）时，
+// 即使凭证中显式写入了官方直连地址，也应强制收口到安全中继，杜绝绕过脱敏防线。
+func IsOfficialCloudCodeEndpoint(rawURL string) bool {
+	trimmed := strings.ToLower(strings.TrimRight(strings.TrimSpace(rawURL), "/"))
+	return trimmed == strings.ToLower(DailyAPIEndpoint) ||
+		trimmed == strings.ToLower(APIEndpoint) ||
+		trimmed == "https://daily-cloudcode-pa.sandbox.googleapis.com"
+}
+
 // dailyAPIEndpoint 返回 Daily API 根地址（不带结尾斜杠），优先使用环境变量覆盖值。
 func dailyAPIEndpoint() string {
-	if v := strings.TrimSpace(os.Getenv(EnvDailyAPIEndpoint)); v != "" {
+	if v := ResolveDailyAPIEndpoint(); v != "" {
 		// NOTE: 调用方用 "%s/%s:method" 拼接，这里去掉结尾斜杠避免出现 "//"。
-		return strings.TrimRight(v, "/")
+		return v
 	}
 	return DailyAPIEndpoint
 }

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	antigravityauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/antigravity"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	sdkauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
@@ -446,12 +447,16 @@ func (s *Service) antigravityModelFetchProxyURL(auth *coreauth.Auth) string {
 }
 
 func antigravityModelBaseURLs(auth *coreauth.Auth) []string {
+	envBase := antigravityauth.ResolveDailyAPIEndpoint()
 	if auth != nil && auth.Attributes != nil {
 		if raw := strings.TrimSpace(auth.Attributes["base_urls"]); raw != "" {
 			parts := strings.Split(raw, ",")
 			urls := make([]string, 0, len(parts))
 			for _, p := range parts {
 				if trimmed := strings.TrimRight(strings.TrimSpace(p), "/"); trimmed != "" {
+					if envBase != "" && antigravityauth.IsOfficialCloudCodeEndpoint(trimmed) {
+						trimmed = envBase
+					}
 					urls = append(urls, trimmed)
 				}
 			}
@@ -461,7 +466,15 @@ func antigravityModelBaseURLs(auth *coreauth.Auth) []string {
 		}
 	}
 	if baseURL := resolveAntigravityModelBaseURL(auth); baseURL != "" {
+		if envBase != "" && antigravityauth.IsOfficialCloudCodeEndpoint(baseURL) {
+			return []string{envBase}
+		}
 		return []string{baseURL}
+	}
+	// NOTE: 当环境配置了 ANTIGRAVITY_DAILY_API_ENDPOINT（如本机 Zero-Leak 安全中继）时，
+	// 模型能力探测也强制收口到该中继，杜绝新登录账号直连 Google 触发 SSLEOFError 或指纹泄露。
+	if envBase != "" {
+		return []string{envBase}
 	}
 	return []string{antigravityModelBaseURLDaily}
 }

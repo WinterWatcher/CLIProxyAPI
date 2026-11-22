@@ -15,6 +15,7 @@ import (
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/google/uuid"
+	antigravityauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/antigravity"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
@@ -650,9 +651,18 @@ func antigravityRequestNeedsSchemaSanitizationDoc(doc *ojson.Doc) bool {
 
 // resolveAntigravityRequestBaseURL selects one request endpoint without cross-tier fallback.
 // Consumer credentials default to daily; enterprise/GCP credentials can set base_url explicitly.
+// NOTE: 当环境配置了 ANTIGRAVITY_DAILY_API_ENDPOINT（如本机 Zero-Leak 安全中继）时，
+// 未配置 base_url 或指向官方 Cloud Code 直连域名的凭证均强制收口到该安全中继，防止裸连 Google 触发封号或 EOF。
 func resolveAntigravityRequestBaseURL(auth *cliproxyauth.Auth) string {
+	envBase := antigravityauth.ResolveDailyAPIEndpoint()
 	if base := resolveCustomAntigravityBaseURL(auth); base != "" {
+		if envBase != "" && antigravityauth.IsOfficialCloudCodeEndpoint(base) {
+			return envBase
+		}
 		return base
+	}
+	if envBase != "" {
+		return envBase
 	}
 	return antigravityBaseURLDaily
 }
