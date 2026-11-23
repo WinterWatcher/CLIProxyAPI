@@ -400,6 +400,11 @@
       "replacement": "Antigravity"
     },
     {
+      "name": "Agent Names: Compact ClaudeCode & Standalone CJK Agents",
+      "pattern": "(?i)claude[-_\\s]*code|豆包|通义灵码|阿里灵码|文心快码|讯飞iflycode|腾讯云[-_ ]?ai代码助手",
+      "replacement": "Antigravity"
+    },
+    {
       "name": "Agent Names: Cody, Amazon Q, Tabnine, JetBrains AI, OpenDevin, Qodo, Goose, SWE-Agent",
       "pattern": "(?i)\\b(?:Sourcegraph[-_ ]Cody|Cody|Amazon[-_ ]Q|CodeWhisperer|Tabnine|JetBrains[-_ ]AI|Junie|OpenDevin|Qodo(?:[-_ ]Gen)?|CodiumAI|Goose|SWE[-_ ]Agent)\\b",
       "replacement": "Antigravity"
