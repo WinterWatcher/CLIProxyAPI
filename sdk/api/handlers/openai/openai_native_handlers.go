@@ -221,7 +221,8 @@ func (h *OpenAIAPIHandler) executeNative(c *gin.Context, cfg *config.Config, pro
 		if bStore != nil && reservationKey != "" {
 			_ = bStore.Release(execCtx, reservationKey, "request_failed")
 		}
-		if re, ok := err.(nativeRouteError); ok {
+		var re nativeRouteError
+		if errors.As(err, &re) {
 			cleanBody := sanitizeNativeErrorBody(re.ResponseBody(), compat, re.StatusCode())
 			writeNativeResponse(c, re.StatusCode(), re.ResponseHeaders(), cleanBody)
 			return
@@ -313,7 +314,8 @@ func emitNativeUsageRecord(c *gin.Context, provider, requestedModel, model, capa
 		Detail:         detail,
 	}
 	if execErr != nil {
-		if re, ok := execErr.(nativeRouteError); ok {
+		var re nativeRouteError
+		if errors.As(execErr, &re) {
 			record.Fail = coreusage.Failure{StatusCode: re.StatusCode(), Body: string(re.ResponseBody())}
 		} else {
 			record.Fail = coreusage.Failure{StatusCode: http.StatusBadGateway, Body: execErr.Error()}
@@ -520,7 +522,8 @@ func (h *OpenAIAPIHandler) VideoSubmit(c *gin.Context) {
 		if bStore != nil && reservationKey != "" {
 			_ = bStore.Release(execCtx, reservationKey, "request_failed")
 		}
-		if re, ok := err.(nativeRouteError); ok {
+		var re nativeRouteError
+		if errors.As(err, &re) {
 			cleanBody := sanitizeNativeErrorBody(re.ResponseBody(), compat, re.StatusCode())
 			writeNativeResponse(c, re.StatusCode(), re.ResponseHeaders(), cleanBody)
 			return
@@ -646,7 +649,8 @@ func (h *OpenAIAPIHandler) VideoStatus(c *gin.Context) {
 	resp, err := h.AuthManager.Execute(context.WithValue(c.Request.Context(), nativeCapabilityContextKey{}, "video"), []string{providerKey}, coreexecutor.Request{Model: task.PublicModel, Payload: body, Format: "openai"}, opts)
 	emitNativeUsageRecord(c, task.Provider, task.PublicModel, task.UpstreamModel, "video_status", body, resp.Payload, start, err)
 	if err != nil {
-		if re, ok := err.(nativeRouteError); ok {
+		var re nativeRouteError
+		if errors.As(err, &re) {
 			cleanBody := sanitizeNativeErrorBody(re.ResponseBody(), compat, re.StatusCode())
 			writeNativeResponse(c, re.StatusCode(), re.ResponseHeaders(), cleanBody)
 			return

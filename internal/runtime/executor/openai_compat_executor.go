@@ -160,7 +160,11 @@ func (e *OpenAICompatExecutor) executeNative(ctx context.Context, auth *cliproxy
 	}
 	helps.AppendAPIResponseChunk(ctx, e.cfg, body)
 	if upstream.StatusCode < 200 || upstream.StatusCode >= 300 {
-		return resp, statusErr{code: upstream.StatusCode, msg: string(body), headers: upstream.Header.Clone(), body: body}
+		// NOTE: 复用上游的状态错误构造（解析 Retry-After 等限流信号），
+		// 否则 429 会因缺少重试信息被上层统一转成 502；再附上 fork 保留的响应头/体。
+		nativeErr := newOpenAICompatStatusError(upstream.StatusCode, upstream.Header, body)
+		nativeErr.response = &statusErrResponse{headers: upstream.Header.Clone(), body: body}
+		return resp, nativeErr
 	}
 	return cliproxyexecutor.Response{Payload: body, Headers: upstream.Header.Clone()}, nil
 }
@@ -1333,7 +1337,9 @@ func openAICompatStreamDataError(payload []byte, eventName string) (statusErr, b
 type statusErr struct {
 	code               int
 	msg                string
+	cause              error
 	retryAfter         *time.Duration
+	requestScoped      bool
 	credentialScoped   bool
 	streamTruncated    bool
 	transientRateLimit bool
@@ -1343,8 +1349,16 @@ type statusErr struct {
 	tosAppealURLText   string
 	// diagnostic is a content-free detail for logs only; it never reaches clients.
 	diagnostic string
-	headers            http.Header
-	body               []byte
+	// response 用指针承载 fork 额外保留的上游响应头/响应体：
+	// http.Header 与 []byte 属于不可比较类型，直接内嵌会让 statusErr 失去可比较性，
+	// 进而使 errors.Is(err, cause) 恒为 false（上游 Issue 7751 测试会失败）。
+	response *statusErrResponse
+}
+
+// statusErrResponse 保存上游错误响应的头与体，仅供管理端与故障诊断读取。
+type statusErrResponse struct {
+	headers http.Header
+	body    []byte
 }
 
 func (e statusErr) Error() string {
@@ -1353,11 +1367,26 @@ func (e statusErr) Error() string {
 	}
 	return fmt.Sprintf("status %d", e.code)
 }
-func (e statusErr) StatusCode() int              { return e.code }
-func (e statusErr) RetryAfter() *time.Duration   { return e.retryAfter }
-func (e statusErr) IsCredentialScoped() bool     { return e.credentialScoped }
-func (e statusErr) ResponseHeaders() http.Header { return e.headers.Clone() }
-func (e statusErr) ResponseBody() []byte         { return append([]byte(nil), e.body...) }
+func (e statusErr) Unwrap() error              { return e.cause }
+func (e statusErr) StatusCode() int            { return e.code }
+func (e statusErr) RetryAfter() *time.Duration { return e.retryAfter }
+func (e statusErr) IsRequestScoped() bool      { return e.requestScoped }
+func (e statusErr) IsCredentialScoped() bool   { return e.credentialScoped }
+
+// NOTE: 保留 fork 暴露上游响应头/响应体的能力，供管理端与故障诊断读取。
+func (e statusErr) ResponseHeaders() http.Header {
+	if e.response == nil {
+		return nil
+	}
+	return e.response.headers.Clone()
+}
+
+func (e statusErr) ResponseBody() []byte {
+	if e.response == nil {
+		return nil
+	}
+	return append([]byte(nil), e.response.body...)
+}
 
 // LogDiagnostic lets upstream failure logs explain a sanitized client message.
 func (e statusErr) LogDiagnostic() string { return e.diagnostic }

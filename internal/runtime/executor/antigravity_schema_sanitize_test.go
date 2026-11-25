@@ -318,20 +318,15 @@ func TestSanitizeAntigravityRequestSchemasProjectsUnionsAndPreservesEnumTypes(t 
 	if toolSchema.Get("properties.choice.anyOf").Exists() {
 		t.Errorf("tool nullable single-branch anyOf union was not flattened: %s", toolSchema.Raw)
 	}
-	if gotBranches := len(toolSchema.Get("properties.item.anyOf").Array()); gotBranches != 3 {
-		t.Errorf("tool multi-branch anyOf count = %d, want 3: %s", gotBranches, toolSchema.Raw)
+	// NOTE: 本 fork 对所有模型的工具 declaration parameters 统一展平 multi-branch anyOf/oneOf
+	// （提交 f14a4d19，避免上游因联合类型校验返回 429），因此这里断言展平结果而非保留分支。
+	item := toolSchema.Get("properties.item")
+	if item.Get("anyOf").Exists() || item.Get("type").String() != "object" || !item.Get("properties.image").Exists() {
+		t.Errorf("tool multi-branch anyOf was not flattened to its first object branch: %s", toolSchema.Raw)
 	}
-	if !toolSchema.Get("properties.item.anyOf.2.properties.audio").Exists() {
-		t.Errorf("tool multi-branch anyOf lost audio branch: %s", toolSchema.Raw)
-	}
-	if toolSchema.Get("properties.variant.oneOf").Exists() {
-		t.Errorf("tool multi-branch oneOf should be converted to anyOf for parameters Schema carrier: %s", toolSchema.Raw)
-	}
-	if gotVariantBranches := len(toolSchema.Get("properties.variant.anyOf").Array()); gotVariantBranches != 2 {
-		t.Errorf("tool multi-branch variant.anyOf count = %d, want 2: %s", gotVariantBranches, toolSchema.Raw)
-	}
-	if !toolSchema.Get("properties.variant.anyOf.1.properties.audio").Exists() {
-		t.Errorf("tool multi-branch variant.anyOf lost audio branch: %s", toolSchema.Raw)
+	variant := toolSchema.Get("properties.variant")
+	if variant.Get("oneOf").Exists() || variant.Get("anyOf").Exists() || variant.Get("type").String() != "object" || !variant.Get("properties.image").Exists() {
+		t.Errorf("tool multi-branch oneOf was not flattened to its first object branch: %s", toolSchema.Raw)
 	}
 	if gotType := toolSchema.Get("properties.level.type").String(); gotType != "number" {
 		t.Errorf("tool enum type = %q, want number: %s", gotType, toolSchema.Raw)
@@ -877,12 +872,9 @@ func TestAntigravityBuildRequestFlattensToolUnionsForClaude_Issue3662Regression(
 			if !finalParams.Exists() {
 				t.Fatalf("model %s: final parameters missing: %s", modelName, encoded)
 			}
-			if strings.Contains(modelName, "claude") {
-				if finalParams.Get("properties.item.anyOf").Exists() || finalParams.Get("properties.item.type").String() != "object" || !finalParams.Get("properties.item.properties.image").Exists() {
-					t.Fatalf("model %s: executor must flatten the union for Claude: %s", modelName, finalParams.Raw)
-				}
-			} else if got := len(finalParams.Get("properties.item.anyOf").Array()); got != 3 || !finalParams.Get("properties.item.anyOf.2.properties.audio").Exists() {
-				t.Fatalf("model %s: executor must keep 3 preserved branches incl. audio for Gemini, got %d: %s", modelName, got, finalParams.Raw)
+			// NOTE: fork 策略下 Claude 与 Gemini 一律由执行器展平 union。
+			if finalParams.Get("properties.item.anyOf").Exists() || finalParams.Get("properties.item.type").String() != "object" || !finalParams.Get("properties.item.properties.image").Exists() {
+				t.Fatalf("model %s: executor must flatten the union for every model (fork policy): %s", modelName, finalParams.Raw)
 			}
 		}
 	})
@@ -894,14 +886,14 @@ func TestAntigravityBuildRequestFlattensToolUnionsForClaude_Issue3662Regression(
 		for _, modelName := range []string{"gemini-3.1-pro-low", "gemini-3.6-flash-high"} {
 			params := declParams(t, modelName)
 
-			if got := len(params.Get("properties.value.anyOf").Array()); got != 3 {
-				t.Fatalf("model %s: preserved anyOf branch count = %d, want 3: %s", modelName, got, params.Raw)
+			// NOTE: fork 策略（提交 f14a4d19）：Gemini 也展平 multi-branch union，保留首个分支的形状。
+			value := params.Get("properties.value")
+			if value.Get("anyOf").Exists() || value.Get("type").String() != "object" || !value.Get("properties.enabled").Exists() {
+				t.Fatalf("model %s: anyOf must be flattened to the object branch (fork policy): %s", modelName, params.Raw)
 			}
-			if !params.Get("properties.value.anyOf.1.properties.enabled").Exists() {
-				t.Fatalf("model %s: preserved anyOf lost the object branch: %s", modelName, params.Raw)
-			}
-			if got := len(params.Get("properties.duo.anyOf").Array()); got != 2 {
-				t.Fatalf("model %s: preserved two-branch anyOf count = %d, want 2: %s", modelName, got, params.Raw)
+			duo := params.Get("properties.duo")
+			if duo.Get("anyOf").Exists() || duo.Get("type").String() != "string" {
+				t.Fatalf("model %s: two-branch anyOf must be flattened to a string (fork policy): %s", modelName, params.Raw)
 			}
 		}
 	})
